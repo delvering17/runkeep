@@ -13,8 +13,8 @@
 ## 저장소 열기
 
 ```sh
-git clone https://github.com/delvering17/runkeep-public.git
-cd runkeep-public
+git clone https://github.com/delvering17/runkeep.git
+cd runkeep
 ```
 
 Android Studio에서 저장소 폴더를 **Open** 합니다. SDK Manager에서 필요한 SDK 구성 요소를 설치하고 Gradle Daemon JVM 기준 또는 Gradle JDK를 JDK 25로 설정합니다.
@@ -87,4 +87,4 @@ preview는 지도 대신 경로 도식을 표시하며 지도 클릭으로 코�
 
 Windows에서는 `./gradlew` 대신 `gradlew.bat`를 사용합니다. 필요한 JDK·Android SDK·의존성 저장소 연결은 검사 환경에 준비되어 있어야 합니다.
 
-[Android build workflow](../.github/workflows/android.yml)는 두 지도 flavor의 debug·simulation 빌드와 lint, core 및 simulation 단위 테스트를 실행합니다. [GitHub Actions](https://github.com/delvering17/runkeep-public/actions)에서 해당 커밋의 결과를 확인하세요. 컴파일·lint·합성 테스트 결과와 실제 기기의 지도 인증, 화면 꺼짐 중 GPS, 오디오 출력, Health Connect 동기화 확인은 구분합니다.
+[Android build workflow](../.github/workflows/android.yml)는 두 지도 flavor의 debug·simulation 빌드와 lint, core 및 simulation 단위 테스트를 실행합니다. [GitHub Actions](https://github.com/delvering17/runkeep/actions)에서 해당 커밋의 결과를 확인하세요. 컴파일·lint·합성 테스트 결과와 실제 기기의 지도 인증, 화면 꺼짐 중 GPS, 오디오 출력, Health Connect 동기화 확인은 구분합니다.

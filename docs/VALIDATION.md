@@ -4,7 +4,7 @@
 
 [Android 워크플로](../.github/workflows/android.yml)는 Temurin JDK 25와 JVM 21/JUnit 5 설정으로 core·simulation 단위 테스트, kakao/preview debug·simulation 네 variant 빌드와 lint를 실행하도록 구성되어 있다. 검사 명령과 보고서 업로드 범위는 워크플로 소스를 기준으로 한다. release 빌드, 서명된 배포와 instrumentation 실행은 이 설정의 성공 범위에 포함하지 않는다.
 
-커밋별 통과 여부와 실행 보고서는 [GitHub Actions](https://github.com/delvering17/runkeep-public/actions)에서 확인한다. 워크플로의 요약에는 테스트 수·실패 수, variant별 lint 오류·경고 수와 JVM 타깃을 출력한다. 이 문서는 검사 구성과 범위를 설명하며, 이전 저장소의 검사 결과를 현재 커밋의 검증으로 대신하지 않는다.
+커밋별 통과 여부와 실행 보고서는 [GitHub Actions](https://github.com/delvering17/runkeep/actions)에서 확인한다. 워크플로의 요약에는 테스트 수·실패 수, variant별 lint 오류·경고 수와 JVM 타깃을 출력한다. 이 문서는 검사 구성과 범위를 설명하며, 이전 저장소의 검사 결과를 현재 커밋의 검증으로 대신하지 않는다.
 
 ## 현재 검증 범위
 

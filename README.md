@@ -1,6 +1,6 @@
 # runkeep · 런킵
 
-[![Android build](https://github.com/delvering17/runkeep-public/actions/workflows/android.yml/badge.svg)](https://github.com/delvering17/runkeep-public/actions/workflows/android.yml)
+[![Android build](https://github.com/delvering17/runkeep/actions/workflows/android.yml/badge.svg)](https://github.com/delvering17/runkeep/actions/workflows/android.yml)
 
 **내가 만든 코스와 구간별 목표 페이스로 달리는 Android 러닝 앱입니다.**
 
@@ -40,7 +40,7 @@
 
 Android Studio에서 저장소를 열고 `kakaoDebug`를 선택하여 휴대폰에서 실행합니다. 카카오 네이티브앱 키와 해당 서명 키의 해시 등록이 필요합니다. 자세한 환경 설정, 지도 없는 `previewDebug`와 검사 명령은 [빌드·실행 안내](docs/BUILDING.md)에 있습니다.
 
-[Android build workflow](.github/workflows/android.yml)는 core 테스트, 카카오·preview의 debug 및 simulation 빌드·lint, simulation 단위 테스트를 실행하도록 구성되어 있습니다. 실행 결과는 [GitHub Actions](https://github.com/delvering17/runkeep-public/actions)에서 확인할 수 있습니다. 자동 검사는 실제 기기의 지도 인증·야외 GPS·음성 출력·Health Connect 동기화를 보장하지 않습니다.
+[Android build workflow](.github/workflows/android.yml)는 core 테스트, 카카오·preview의 debug 및 simulation 빌드·lint, simulation 단위 테스트를 실행하도록 구성되어 있습니다. 실행 결과는 [GitHub Actions](https://github.com/delvering17/runkeep/actions)에서 확인할 수 있습니다. 자동 검사는 실제 기기의 지도 인증·야외 GPS·음성 출력·Health Connect 동기화를 보장하지 않습니다.
 
 ## 기술 구성
 
@@ -64,4 +64,4 @@ Android Studio에서 저장소를 열고 `kakaoDebug`를 선택하여 휴대폰�
 - [GPS 시뮬레이터](docs/GPS_SIMULATOR.md)
 - [검증 범위와 결과](docs/VALIDATION.md)
 
-문제나 개선 제안은 [GitHub Issues](https://github.com/delvering17/runkeep-public/issues)에 남길 수 있습니다. 위치·심박수·계정 정보가 포함된 원본 파일을 공개 이슈에 첨부할 필요는 없습니다.
+문제나 개선 제안은 [GitHub Issues](https://github.com/delvering17/runkeep/issues)에 남길 수 있습니다. 위치·심박수·계정 정보가 포함된 원본 파일을 공개 이슈에 첨부할 필요는 없습니다.
