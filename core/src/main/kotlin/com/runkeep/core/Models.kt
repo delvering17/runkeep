@@ -25,6 +25,7 @@ fun newId(): String = UUID.randomUUID().toString()
     val meters get() = points.zipWithNext().sumOf { (a, b) -> Geo.distance(a, b) }
 }
 @Serializable enum class StepKind { DISTANCE, TIME }
+@Serializable enum class PaceCoachingMode { IMMEDIATE, STABLE }
 @Serializable data class PlanStep(val name: String = "달리기", val kind: StepKind, val amount: Double, val paceSeconds: Int) {
     init { require(amount.isFinite() && amount > 0); require(paceSeconds in 120..1800) }
     val expectedMeters get() = if (kind == StepKind.DISTANCE) amount else amount / paceSeconds * 1000
@@ -49,7 +50,9 @@ fun newId(): String = UUID.randomUUID().toString()
     val metronome: Boolean = false,
     val distancePaceVoice: Boolean = false, val distancePaceMeters: Int = DistancePacePolicy.DEFAULT_INTERVAL_METERS,
     val startDelaySeconds: Int = 0,
-    val startDelayPresetSeconds: Int = 5, val cadencePresetSpm: Int = PaceFeedbackPolicy.DEFAULT_CADENCE_SPM
+    val startDelayPresetSeconds: Int = 5, val cadencePresetSpm: Int = PaceFeedbackPolicy.DEFAULT_CADENCE_SPM,
+    val paceCoachingMode: PaceCoachingMode = PaceCoachingMode.IMMEDIATE,
+    val periodicPaceVoice: Boolean = false, val periodicPaceSeconds: Int = 30
 ) {
     fun normalized(): Preferences = copy(
         paceTolerance = paceTolerance.coerceIn(5, 60),
@@ -57,6 +60,7 @@ fun newId(): String = UUID.randomUUID().toString()
             ?: PaceFeedbackPolicy.DEFAULT_REPEAT_SECONDS,
         cadenceTargetSpm = cadenceTargetSpm?.takeIf { it in PaceFeedbackPolicy.CADENCE_RANGE },
         distancePaceMeters = DistancePacePolicy.normalizeInterval(distancePaceMeters),
+        periodicPaceSeconds = periodicPaceSeconds.takeIf { it in 10..300 } ?: 30,
         startDelaySeconds = RunStartPolicy.normalizeDelay(startDelaySeconds),
         startDelayPresetSeconds = startDelayPresetSeconds.takeIf { it in 1..60 } ?: 5,
         cadencePresetSpm = cadencePresetSpm.takeIf { it in PaceFeedbackPolicy.CADENCE_RANGE } ?: PaceFeedbackPolicy.DEFAULT_CADENCE_SPM,
@@ -87,7 +91,8 @@ fun newId(): String = UUID.randomUUID().toString()
         else plan?.steps?.getOrNull(planIndex)?.paceSeconds
 }
 data class LocationFix(val coordinate: Coordinate, val epochMs: Long, val monotonicMs: Long,
-                       val accuracy: Float, val altitude: Double? = null, val speed: Float? = null)
+                       val accuracy: Float, val altitude: Double? = null, val speed: Float? = null,
+                       val speedAccuracy: Float? = null)
 data class LiveRun(val summary: RunSummary? = null, val points: List<TrackPoint> = emptyList(),
                    val pace: Double? = null, val cadence: Double? = null, val gpsMessage: String = "GPS를 기다리는 중", val cue: String? = null,
                    val position: Coordinate? = null, val accuracy: Float? = null,

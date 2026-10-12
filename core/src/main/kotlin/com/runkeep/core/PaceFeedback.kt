@@ -26,9 +26,16 @@ class PaceFeedback {
     private var lastEvaluation: Long? = null
     private var voiceInFlight = false
     private var voiceAvailable = false
+    private val stable = StablePaceDirection()
+    private var previousTarget: Int? = null
+    private var previousMode: PaceCoachingMode? = null
+    private var previousTolerance: Int? = null
+    private var targetReset = false
 
-    fun reset() {
+    fun reset(targetChanged: Boolean = false) {
         state = PaceFeedbackState(); since = null; lastSpoken = null; lastEvaluation = null; voiceInFlight = false; voiceAvailable = false
+        stable.reset(); previousTarget = null; previousMode = null
+        previousTolerance = null; targetReset = targetChanged
     }
 
     fun evaluate(now: Long, running: Boolean, pace: Double?, target: Int?, gpsAt: Long?, prefs: Preferences): PaceFeedbackState {
@@ -38,15 +45,25 @@ class PaceFeedback {
         if (!running || gpsAt == null || now - gpsAt !in 0..PaceFeedbackPolicy.GPS_MAX_AGE_MS ||
             pace == null || !pace.isFinite() || pace <= 0 || pace > 3600 || target == null || target !in 120..1800) {
             state = PaceFeedbackState(); since = null; voiceAvailable = false
+            stable.reset(); previousTarget = null
             return state
         }
         val error = pace - target
         val tolerance = settings.paceTolerance
-        val direction = when {
+        val measuredDirection = when {
             error < -tolerance -> PaceDirection.FAST
             error > tolerance -> PaceDirection.SLOW
             else -> null
         }
+        val targetChanged = targetReset || (previousTarget != null && previousTarget != target)
+        targetReset = false
+        if (previousMode != settings.paceCoachingMode || previousTolerance != tolerance) stable.reset()
+        previousMode = settings.paceCoachingMode
+        previousTolerance = tolerance
+        previousTarget = target
+        val direction = if (settings.paceCoachingMode == PaceCoachingMode.STABLE)
+            stable.evaluate(measuredDirection, error, tolerance, gpsAt, targetChanged)
+        else measuredDirection
         if (direction != state.direction || since == null) since = direction?.let { now }
         val elapsed = since?.let { now - it } ?: 0L
         val current = PaceFeedbackState(direction, currentPace = pace, targetPace = target)

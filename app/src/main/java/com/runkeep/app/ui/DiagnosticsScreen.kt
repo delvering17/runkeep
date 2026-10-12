@@ -169,6 +169,10 @@ import kotlin.math.roundToInt
             app.updateSettings(prefs.copy(paceRepeatSeconds = it))
         }, presets = listOf(10, 30, 60, 120))
         }
+        Section("주기 음성")
+        ToggleRow("시간마다 현재 페이스", prefs.periodicPaceVoice) { app.updateSettings(prefs.copy(periodicPaceVoice = it)) }
+        if (prefs.voice && prefs.periodicPaceVoice) IntegerSettingRow("현재 페이스 안내 간격", prefs.periodicPaceSeconds,
+            10..300, "초", { app.updateSettings(prefs.copy(periodicPaceSeconds = it)) }, presets = listOf(10, 30, 60, 120, 300))
         Section("거리 음성")
         ToggleRow("거리마다 현재 페이스", prefs.distancePaceVoice) { app.updateSettings(prefs.copy(distancePaceVoice = it)) }
         if (prefs.voice && prefs.distancePaceVoice) SelectionRow("현재 페이스 안내 간격", "${prefs.distancePaceMeters}m", {

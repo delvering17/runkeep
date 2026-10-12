@@ -23,6 +23,17 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
     private var lastStepCue = summary.planIndex
     private var lastKm = (summary.meters / 1000).toInt()
     private val paceWindow = ArrayDeque<Pair<Long, Double>>()
+    private val providerPace = ProviderPaceWindow()
+    private val periodicPace = PeriodicPace()
+    private var speechGeneration = 0L
+    private var speechSequence = 0L
+    private var activeSpeech: RunSpeechToken? = null
+    private var speechStarted = false
+    private var currentWasValid = false
+    private var lastCurrentSpokenAt: Long? = null
+    private var lastCurrentSpokenRounded: Int? = null
+    /** Diagnostics only; recorded distance and statistics use the original GPS path. */
+    var providerPaceUsed = false; private set
     private val navigator = initial.course?.let { CourseNavigator(it.points, preferences.turnLeadMeters).apply { restore(savedPoints) } }
     private val waypointTracker = initial.course?.takeIf { initial.coursePaceEnabled }?.let { course ->
         OrderedWaypointTracker(course).apply { savedPoints.forEach(::observe); disconnect() }
@@ -52,7 +63,7 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         advancePlan()
         announceStep(monotonicMs)
         if (lastFix?.let { monotonicMs - it.monotonicMs > 10_000 } != false) {
-            currentPace = null; autoPause.reset("gps_expired"); paceWindow.clear(); gpsMessage = "GPS 신호를 확인해주세요"
+            currentPace = null; autoPause.reset("gps_expired"); clearPaceWindow(); gpsMessage = "GPS 신호를 확인해주세요"
         }
         if (evaluateAutoPause && preferences.autoPause && autoPause.shouldPause(monotonicMs)) {
             pause(true); announcements += Announcement.Message(AnnouncementKind.STATE, "자동 일시정지", monotonicMs)
@@ -64,20 +75,20 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         if (fix.monotonicMs < resumeAt || lastFix?.let { fix.monotonicMs <= it.monotonicMs } == true) return null
         if (receivedAtMs - fix.monotonicMs !in 0..AutoPauseDetector.MAX_GAP_MS) {
             autoPause.reset("stale_fix"); lastFix = null
-            currentPace = null; paceWindow.clear(); gpsMessage = "GPS 신호를 확인해주세요"
+            currentPace = null; clearPaceWindow(); gpsMessage = "GPS 신호를 확인해주세요"
             coach(receivedAtMs)
             return null
         }
         updateClock(fix.monotonicMs, fix.epochMs, evaluateAutoPause = false)
         if (summary.status == RunStatus.PAUSED || summary.status == RunStatus.INTERRUPTED || summary.status == RunStatus.FINISHED) return null
         if (!fix.accuracy.isFinite() || fix.accuracy < 0 || fix.accuracy > 25) {
-            gpsMessage = "GPS 정확도가 낮습니다"; currentPace = null; autoPause.reset("accuracy"); lastFix = null; paceWindow.clear(); coach(fix.monotonicMs); return null
+            gpsMessage = "GPS 정확도가 낮습니다"; currentPace = null; autoPause.reset("accuracy"); lastFix = null; clearPaceWindow(); coach(fix.monotonicMs); return null
         }
         val previous = lastFix
         val seconds = previous?.let { (fix.monotonicMs - it.monotonicMs) / 1000.0 } ?: 0.0
         val delta = previous?.let { Geo.distance(it.coordinate, fix.coordinate) } ?: 0.0
         if (previous != null && seconds < 15 && delta / seconds > 12) {
-            gpsMessage = "GPS 위치 튐을 제외했습니다"; currentPace = null; autoPause.reset("position_jump"); coach(fix.monotonicMs); return null
+            gpsMessage = "GPS 위치 튐을 제외했습니다"; currentPace = null; providerPace.clear(); providerPaceUsed = false; autoPause.reset("position_jump"); coach(fix.monotonicMs); return null
         }
         if (summary.status == RunStatus.RUNNING && preferences.autoPause) {
             autoPause.observeRunning(fix, previous)
@@ -100,7 +111,7 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         val added = if (validLeg && moving && delta >= 0.8) delta else 0.0
         val before = summary
         var segment = summary.segment
-        if (previous == null || seconds > 15) { segment++; paceWindow.clear() }
+        if (previous == null || seconds > 15) { segment++; clearPaceWindow() }
         summary = summary.copy(meters = summary.meters + added, segment = segment)
         lastFix = fix
         gpsMessage = "GPS ±${fix.accuracy.roundToInt()}m"
@@ -120,6 +131,9 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         val oldest = paceWindow.first()
         val windowMs = summary.activeMs - oldest.first; val windowMeters = summary.meters - oldest.second
         currentPace = if (windowMs >= 8000 && windowMeters >= 8) windowMs / windowMeters else null
+        providerPace.observe(fix, summary.activeMs)
+        providerPaceUsed = currentPace != null && providerPace.ready
+        if (providerPaceUsed) currentPace = providerPace.pace()
         advancePlan(points.getOrNull(points.lastIndex - 1))
         coach(fix.monotonicMs)
         navigator?.update(fix.coordinate, fix.epochMs)?.let { announcements += Announcement.Message(AnnouncementKind.NAVIGATION, it, fix.monotonicMs) }
@@ -172,7 +186,7 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         if (summary.coursePaceEnabled) {
             val marker = summary.courseLegIndex to summary.coursePaceComplete
             if (marker != lastCourseCue) {
-                lastCourseCue = marker; paceFeedback.reset(); clearPaceWarnings()
+                lastCourseCue = marker; paceFeedback.reset(targetChanged = true); clearPaceWarnings()
                 val index = summary.courseLegIndex
                 if (summary.coursePaceComplete) announcements += Announcement.Message(AnnouncementKind.STEP, "코스 페이스 계획을 완료했습니다", now)
                 else if (index >= 0) {
@@ -184,7 +198,7 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
             return
         }
         if (summary.planIndex != lastStepCue) {
-            lastStepCue = summary.planIndex; paceFeedback.reset(); clearPaceWarnings()
+            lastStepCue = summary.planIndex; paceFeedback.reset(targetChanged = true); clearPaceWarnings()
             announcements += summary.plan?.steps?.getOrNull(lastStepCue)?.let { Announcement.Step(it.name, it.paceSeconds.toDouble(), now) }
                 ?: Announcement.Message(AnnouncementKind.STEP, "페이스 계획을 완료했습니다", now)
         }
@@ -209,6 +223,14 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         val next = value.normalized()
         if (next.voice != feedbackPreferences.voice || next.distancePaceVoice != feedbackPreferences.distancePaceVoice ||
             next.distancePaceMeters != feedbackPreferences.distancePaceMeters) clearDistancePace()
+        if (next.voice != feedbackPreferences.voice || next.periodicPaceVoice != feedbackPreferences.periodicPaceVoice ||
+            next.periodicPaceSeconds != feedbackPreferences.periodicPaceSeconds || next.distancePaceVoice != feedbackPreferences.distancePaceVoice ||
+            next.paceVoice != feedbackPreferences.paceVoice || next.readCurrentPace != feedbackPreferences.readCurrentPace ||
+            next.readPaceStatus != feedbackPreferences.readPaceStatus || next.readTargetPace != feedbackPreferences.readTargetPace ||
+            next.paceTolerance != feedbackPreferences.paceTolerance || next.paceCoachingMode != feedbackPreferences.paceCoachingMode) {
+            speechGeneration++
+            announcements.removeAll { it.kind == AnnouncementKind.CURRENT_PACE }
+        }
         feedbackPreferences = next
         distancePace.configure(feedbackPreferences.voice && feedbackPreferences.distancePaceVoice,
             feedbackPreferences.distancePaceMeters, summary.meters)
@@ -258,20 +280,155 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         clearPaceWarnings()
         if (state.voiceDue) paceWarningAnnouncement(state, feedbackPreferences, now)?.let { announcements += it }
         refreshDistancePace(now)
+        val validCurrent = validDistancePace(now) != null
+        if (currentWasValid && !validCurrent) speechGeneration++
+        currentWasValid = validCurrent
+        periodicPace.configure(feedbackPreferences.voice && feedbackPreferences.periodicPaceVoice, feedbackPreferences.periodicPaceSeconds)
+        if (periodicPace.observe(summary.activeMs, validCurrent)) {
+            announcements.removeAll { it.kind == AnnouncementKind.CURRENT_PACE }
+            announcements += Announcement.Pace(AnnouncementKind.CURRENT_PACE, currentPace, now)
+        }
+        refreshPeriodicPace(now)
+    }
+    private fun clearPaceWindow() {
+        paceWindow.clear(); providerPace.clear(); providerPaceUsed = false
+    }
+    private fun refreshPeriodicPace(now: Long) {
+        val pace = validDistancePace(now).takeIf { feedbackPreferences.voice && feedbackPreferences.periodicPaceVoice }
+        val refreshed = announcements.mapNotNull { event ->
+            if (event is Announcement.Pace && event.kind == AnnouncementKind.CURRENT_PACE)
+                pace?.let { event.copy(secondsPerKilometer = it) } else event
+        }
+        announcements.clear(); announcements.addAll(refreshed)
+    }
+    /** Prepare immediately before calling TTS. A failed request does not consume the original cue. */
+    fun prepareSpeech(selected: Announcement, now: Long): PreparedRunSpeech? {
+        if (!feedbackPreferences.voice) return null
+        val pace = validDistancePace(now)
+        val event = when (selected) {
+            is Announcement.Pace -> if (selected.kind == AnnouncementKind.CURRENT_PACE) {
+                if (!feedbackPreferences.periodicPaceVoice || pace == null) return null
+                selected.copy(secondsPerKilometer = pace)
+            } else selected
+            is Announcement.DistancePace -> {
+                if (!feedbackPreferences.distancePaceVoice || pace == null) return null
+                selected.copy(currentSecondsPerKilometer = pace)
+            }
+            is Announcement.Kilometer -> selected.copy(currentSecondsPerKilometer = pace.takeIf {
+                (feedbackPreferences.distancePaceVoice && selected.currentSecondsPerKilometer != null) ||
+                    (feedbackPreferences.periodicPaceVoice && announcements.any { it.kind == AnnouncementKind.CURRENT_PACE })
+            })
+            is Announcement.Message -> if (selected.kind == AnnouncementKind.PACE_WARNING) {
+                if (pace == null || !feedback.voiceDue) return null
+                // The current numeric phrase is already fulfilled by a nearby real utterance.
+                // Keep warning/target independently; never infer this from a requested or failed TTS.
+                val prefs = feedbackPreferences.copy(readCurrentPace = feedbackPreferences.readCurrentPace &&
+                    (!feedbackPreferences.periodicPaceVoice || !sameSpokenCurrent(now, pace)))
+                paceWarningAnnouncement(feedback, prefs, now) ?: return null
+            } else selected
+            else -> selected
+        }
+        val readsCurrent = when (event) {
+            is Announcement.Pace -> event.kind == AnnouncementKind.CURRENT_PACE
+            is Announcement.DistancePace -> true
+            is Announcement.Kilometer -> event.currentSecondsPerKilometer != null
+            is Announcement.Message -> event.kind == AnnouncementKind.PACE_WARNING && feedbackPreferences.readCurrentPace &&
+                (!feedbackPreferences.periodicPaceVoice || !sameSpokenCurrent(now, pace))
+            else -> false
+        }
+        val spokenCurrent = if (!readsCurrent) null else when (event) {
+            is Announcement.Pace -> event.secondsPerKilometer
+            is Announcement.DistancePace -> event.currentSecondsPerKilometer
+            is Announcement.Kilometer -> event.currentSecondsPerKilometer
+            else -> feedback.currentPace
+        }
+        val token = RunSpeechToken(this, speechGeneration, ++speechSequence, event.kind, readsCurrent, spokenCurrent,
+            feedback.direction.takeIf { event.kind == AnnouncementKind.PACE_WARNING },
+            feedback.targetPace.takeIf { event.kind == AnnouncementKind.PACE_WARNING }, event as? Announcement.Kilometer)
+        return PreparedRunSpeech(event, token)
+    }
+    private fun sameSpokenCurrent(now: Long, pace: Double?): Boolean = pace != null &&
+        lastCurrentSpokenAt?.let { now - it in 0..5_000 } == true && round(pace).toInt() == lastCurrentSpokenRounded
+    /** Does not interrupt a sentence merely because the sampled numeric pace changes. */
+    fun isSpeechCurrent(token: RunSpeechToken, now: Long): Boolean {
+        if (token.owner !== this || !feedbackPreferences.voice) return false
+        val sampled = token.kind == AnnouncementKind.CURRENT_PACE || token.kind == AnnouncementKind.DISTANCE_PACE ||
+            token.kind == AnnouncementKind.PACE_WARNING
+        // An unstarted kilometer current phrase must still be fresh. Completion requeues its average.
+        if (!sampled) return !token.readsCurrent || (activeSpeech === token && speechStarted) ||
+            (token.generation == speechGeneration && validDistancePace(now) != null &&
+                (feedbackPreferences.distancePaceVoice || feedbackPreferences.periodicPaceVoice))
+        // Preserve an actual sentence through normal recovery, target changes and GPS expiry.
+        if (activeSpeech === token && speechStarted) return summary.status == RunStatus.RUNNING && when (token.kind) {
+            AnnouncementKind.CURRENT_PACE -> feedbackPreferences.periodicPaceVoice
+            AnnouncementKind.DISTANCE_PACE -> feedbackPreferences.distancePaceVoice
+            AnnouncementKind.PACE_WARNING -> feedbackPreferences.paceVoice
+            else -> true
+        }
+        if (token.generation != speechGeneration || validDistancePace(now) == null) return false
+        return when (token.kind) {
+            AnnouncementKind.CURRENT_PACE -> feedbackPreferences.periodicPaceVoice
+            AnnouncementKind.DISTANCE_PACE -> feedbackPreferences.distancePaceVoice
+            AnnouncementKind.PACE_WARNING -> feedbackPreferences.paceVoice && feedback.direction == token.warningDirection &&
+                feedback.targetPace == token.warningTarget
+            else -> true
+        }
+    }
+    fun speechRequested(token: RunSpeechToken) {
+        if (token.owner !== this || token.generation != speechGeneration) return
+        activeSpeech = token; speechStarted = false
+        if (token.kind == AnnouncementKind.PACE_WARNING) paceWarningRequested()
+    }
+    /** Validate at processing time; retain the actual callback time for spoken credit. */
+    fun speechStarted(token: RunSpeechToken, now: Long, validatedAtMs: Long = now) {
+        if (activeSpeech !== token || speechStarted || !isSpeechCurrent(token, validatedAtMs)) return
+        speechStarted = true
+        if (token.kind == AnnouncementKind.PACE_WARNING) paceWarningSpoken(now)
+        if (token.readsCurrent && token.generation == speechGeneration && validDistancePace(validatedAtMs) != null) {
+            if (feedbackPreferences.periodicPaceVoice) {
+                lastCurrentSpokenAt = now
+                lastCurrentSpokenRounded = token.currentSeconds?.let { round(it).toInt() }
+            }
+            periodicPace.spoken(summary.activeMs)
+            val spoken = token.currentSeconds?.let { round(it).toInt() }
+            fun fulfilled(value: Double?) = value != null && round(value).toInt() == spoken
+            announcements.removeAll {
+                (it is Announcement.Pace && it.kind == AnnouncementKind.CURRENT_PACE && fulfilled(it.secondsPerKilometer)) ||
+                    (it is Announcement.DistancePace && fulfilled(it.currentSecondsPerKilometer))
+            }
+            val kept = announcements.map {
+                if (it is Announcement.Kilometer && fulfilled(it.currentSecondsPerKilometer)) it.copy(currentSecondsPerKilometer = null) else it
+            }
+            announcements.clear(); announcements.addAll(kept)
+        }
+    }
+    fun speechCompleted(token: RunSpeechToken) {
+        if (activeSpeech !== token) return
+        if (!speechStarted && token.readsCurrent) token.kilometer?.let {
+            announcements += it.copy(currentSecondsPerKilometer = null)
+        }
+        activeSpeech = null
+        if (token.kind == AnnouncementKind.PACE_WARNING) paceWarningCompleted()
+    }
+    private fun resetPeriodicPace() {
+        speechGeneration++; currentWasValid = false; periodicPace.reset()
+        lastCurrentSpokenAt = null
+        lastCurrentSpokenRounded = null
+        announcements.removeAll { it.kind == AnnouncementKind.CURRENT_PACE }
     }
     fun paceWarningRequested() { paceFeedback.requested(); clearPaceWarnings() }
     fun paceWarningSpoken(now: Long) { paceFeedback.spoken(now) }
     fun paceWarningCompleted() { paceFeedback.completed() }
     fun invalidatePace(now: Long) {
-        currentPace = null; paceWindow.clear(); waypointTracker?.disconnect(); courseDistance?.disconnect(); coach(now)
+        currentPace = null; clearPaceWindow(); waypointTracker?.disconnect(); courseDistance?.disconnect(); coach(now)
     }
     fun pause(automatic: Boolean = false) {
         if (summary.status != RunStatus.RUNNING && (automatic || summary.status != RunStatus.AUTO_PAUSED)) return
         if (automatic) lastAutoPauseTransition = autoPause.diagnostics.copy(reason = "pause_confirmed")
         summary = summary.copy(status = if (automatic) RunStatus.AUTO_PAUSED else RunStatus.PAUSED)
-        currentPace = null; paceWindow.clear(); paceFeedback.reset(); clearPaceWarnings()
+        currentPace = null; clearPaceWindow(); paceFeedback.reset(); clearPaceWarnings()
         waypointTracker?.disconnect(); courseDistance?.disconnect()
-        resetDistancePace()
+        resetDistancePace(); resetPeriodicPace()
         autoPause.reset(if (automatic) "auto_paused" else "manual_paused")
         if (!automatic) lastFix = null
     }
@@ -279,10 +436,10 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         if (summary.status == RunStatus.AUTO_PAUSED) lastAutoPauseTransition = autoPause.diagnostics.copy(reason = "resume_confirmed")
         summary = summary.copy(status = RunStatus.RUNNING, segment = summary.segment + 1)
         paceFeedback.reset(); clearPaceWarnings()
-        tickAt = now; resumeAt = now; lastFix = null; autoPause.reset("resumed"); paceWindow.clear(); currentPace = null
+        tickAt = now; resumeAt = now; lastFix = null; autoPause.reset("resumed"); clearPaceWindow(); currentPace = null
         waypointTracker?.disconnect(); courseDistance?.disconnect()
-        resetDistancePace()
+        resetDistancePace(); resetPeriodicPace()
     }
-    fun finish(epochMs: Long) { summary = summary.copy(status = RunStatus.FINISHED, endedAt = epochMs); paceFeedback.reset(); clearPaceWarnings(); resetDistancePace() }
-    fun interrupt() { summary = summary.copy(status = RunStatus.INTERRUPTED); tickAt = null; lastFix = null; autoPause.reset("interrupted"); currentPace = null; paceFeedback.reset(); clearPaceWarnings(); resetDistancePace() }
+    fun finish(epochMs: Long) { summary = summary.copy(status = RunStatus.FINISHED, endedAt = epochMs); paceFeedback.reset(); clearPaceWarnings(); resetDistancePace(); resetPeriodicPace() }
+    fun interrupt() { summary = summary.copy(status = RunStatus.INTERRUPTED); tickAt = null; lastFix = null; autoPause.reset("interrupted"); currentPace = null; paceFeedback.reset(); clearPaceWarnings(); resetDistancePace(); resetPeriodicPace() }
 }
