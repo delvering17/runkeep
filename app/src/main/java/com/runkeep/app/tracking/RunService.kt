@@ -26,7 +26,8 @@ class RunService : Service(), SensorEventListener {
     private var audioFocus: RunAudioFocus? = null
     private var speech: SpeechPlayer? = null
     private var alarmPlayer: PaceAlarmPlayer? = null
-    private var activePaceWarning: PaceFeedbackState? = null
+    private data class ActiveRunSpeech(val source: RunEngine, val token: RunSpeechToken, val request: WorkoutSpeechRequest)
+    private var activeRunSpeech: ActiveRunSpeech? = null
     private val audioSession = WorkoutAudioSession()
     private var previousAlarmEnabled = false
     private var previousMetronomeEnabled = false
@@ -51,7 +52,8 @@ class RunService : Service(), SensorEventListener {
         data class Command(val action: String?, val payload: String?, val startId: Int, val runId: String?) : Event
         data class Position(val state: PositionState) : Event
         data class Settings(val value: Preferences) : Event
-        data class SpeechStarted(val source: RunEngine, val request: WorkoutSpeechRequest, val atMs: Long) : Event
+        data class SpeechStarted(val source: RunEngine, val request: WorkoutSpeechRequest, val token: RunSpeechToken, val atMs: Long) : Event
+        data class SpeechCompleted(val source: RunEngine, val request: WorkoutSpeechRequest, val token: RunSpeechToken) : Event
         data class PreparationTick(val requestId: String) : Event
         data class SpeechFinished(val ticket: FinishSpeechTicket) : Event
         data object Tick : Event
@@ -89,8 +91,18 @@ class RunService : Service(), SensorEventListener {
                             syncAudio(); speak(); drainFinish()
                         }
                         is Event.SpeechStarted -> {
-                            if (engine === event.source && activePaceWarning != null && audioSession.accepts(event.request))
-                                event.source.paceWarningSpoken(event.atMs)
+                            if (engine === event.source && activeRunSpeech?.token == event.token && audioSession.accepts(event.request)) {
+                                val validatedAtMs = SystemClock.elapsedRealtime()
+                                if (event.source.isSpeechCurrent(event.token, validatedAtMs))
+                                    event.source.speechStarted(event.token, event.atMs, validatedAtMs)
+                                else stopRunSpeech()
+                            }
+                        }
+                        is Event.SpeechCompleted -> {
+                            if (activeRunSpeech?.token == event.token && audioSession.accepts(event.request)) {
+                                event.source.speechCompleted(event.token)
+                                activeRunSpeech = null; audioSession.completed()
+                            }
                         }
                         is Event.PreparationTick -> advancePreparation(event.requestId)
                         is Event.SpeechFinished -> if (finishPolicy.complete(event.ticket)) {
@@ -103,7 +115,7 @@ class RunService : Service(), SensorEventListener {
                     app.error.value = "기록 처리 오류: ${e.message ?: "권한과 저장 공간을 확인해주세요"}"
                     cancelPreparation()
                     finishPolicy.cancel(); finishText = null
-                    speech?.stop(); activePaceWarning = null; audioSession.completed()
+                    stopRunSpeech()
                     engine?.interrupt()
                     syncAudio(); publish(); stopWhenIdle()
                 }
@@ -154,7 +166,7 @@ class RunService : Service(), SensorEventListener {
         when (event.action) {
             PAUSE -> {
                 if (e.summary.status == RunStatus.RUNNING) {
-                    speech?.stop(); activePaceWarning = null; audioSession.completed()
+                    stopRunSpeech()
                     e.pause(); e.announcements += Announcement.Message(AnnouncementKind.STATE, "일시정지합니다", now)
                 }
             }
@@ -165,7 +177,7 @@ class RunService : Service(), SensorEventListener {
                 app.location.restart()
             }
             FINISH -> {
-                alarmPlayer?.stop(); speech?.stop(); activePaceWarning = null; audioSession.completed()
+                alarmPlayer?.stop(); stopRunSpeech()
                 e.announcements.clear()
                 e.finish(System.currentTimeMillis())
                 app.db.dao().checkpoint(e.summary)
@@ -231,10 +243,17 @@ class RunService : Service(), SensorEventListener {
         lastLocationNanos = -1L; steps.clear(); cadence = null
     }
     private fun closeAudioSession() {
-        activePaceWarning = null; audioSession.completed()
+        stopRunSpeech()
         speech?.close(); speech = null
         alarmPlayer?.close(); alarmPlayer = null
         audioFocus?.close(); audioFocus = null
+    }
+    private fun stopRunSpeech() {
+        val active = activeRunSpeech
+        activeRunSpeech = null
+        speech?.stop()
+        active?.let { it.source.speechCompleted(it.token) }
+        audioSession.completed()
     }
     private fun stopWhenIdle() {
         if (engine != null || startPolicy.preparation(SystemClock.elapsedRealtime()) != null || finishPolicy.ticket != null ||
@@ -291,7 +310,8 @@ class RunService : Service(), SensorEventListener {
         if (SystemClock.elapsedRealtime() - mono > 10_000 || location.elapsedRealtimeNanos < recordAfterNanos) return
         val point = e.ingest(LocationFix(Coordinate(location.latitude, location.longitude), location.time, mono,
             location.accuracy, if (location.hasAltitude()) location.altitude else null,
-            if (location.hasSpeed()) location.speed else null), cadence, receivedAtMs = SystemClock.elapsedRealtime())
+            if (location.hasSpeed()) location.speed else null,
+            if (location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond else null), cadence, receivedAtMs = SystemClock.elapsedRealtime())
         syncAudio()
         app.db.dao().checkpoint(e.summary, point, e.points.lastIndex)
         publish(); syncAudio(); speak()
@@ -327,13 +347,10 @@ class RunService : Service(), SensorEventListener {
     private fun syncAudio() {
         val e = engine ?: run { alarmPlayer?.stop(); return }
         val prefs = app.settings.value
-        val active = activePaceWarning
-        if (active != null && (speech?.isSpeaking != true || !prefs.voice || !prefs.paceVoice ||
-                e.summary.status != RunStatus.RUNNING)) {
-            if (speech?.isSpeaking == true) speech?.stop()
-            activePaceWarning = null; audioSession.completed(); e.paceWarningCompleted()
-        }
-        if (!prefs.voice && speech?.isSpeaking == true) speech?.stop()
+        val active = activeRunSpeech
+        if (active != null && (active.source !== e || speech?.isSpeaking != true || !prefs.voice ||
+                !e.isSpeechCurrent(active.token, SystemClock.elapsedRealtime()))) stopRunSpeech()
+        if (!prefs.voice && speech?.isSpeaking == true) stopRunSpeech()
         alarmPlayer?.update(e.feedback.alarm.takeIf { prefs.paceAlarm }, prefs.cadenceTargetSpm,
             prefs.paceAlarmVolume, e.paceValidUntil, metronome = prefs.metronome && e.summary.status == RunStatus.RUNNING)
     }
@@ -345,18 +362,25 @@ class RunService : Service(), SensorEventListener {
         val player = speech ?: return
         val queue = AnnouncementQueue(e.announcements)
         val event = queue.next(now, e.summary.status, playbackBusy = player.isSpeaking) ?: return
-        val text = event.speechText()
+        if (!app.settings.value.voice) {
+            val text = event.speechText()
+            if (text.isNotBlank()) { audioSession.show(text); app.live.value = app.live.value.copy(cue = text) }
+            queue.acknowledge(event)
+            return
+        }
+        val prepared = e.prepareSpeech(event, now)
+        if (prepared == null) { queue.acknowledge(event); return }
+        val text = prepared.event.speechText()
         if (text.isBlank()) { queue.acknowledge(event); return }
         audioSession.show(text)
         app.live.value = app.live.value.copy(cue = text)
-        if (!app.settings.value.voice) { queue.acknowledge(event); return }
-        val paceState = e.feedback.takeIf { event.kind == AnnouncementKind.PACE_WARNING }
         val request = audioSession.requested()
-        if (player.speak(text, app.settings.value) {
-                if (paceState != null) events.trySend(Event.SpeechStarted(e, request, SystemClock.elapsedRealtime()))
-            }) {
+        if (player.speak(text, app.settings.value,
+                onFinished = { events.trySend(Event.SpeechCompleted(e, request, prepared.token)) },
+                onStarted = { events.trySend(Event.SpeechStarted(e, request, prepared.token, SystemClock.elapsedRealtime())) })) {
             queue.acknowledge(event)
-            if (paceState != null) { activePaceWarning = paceState; e.paceWarningRequested() }
+            activeRunSpeech = ActiveRunSpeech(e, prepared.token, request)
+            e.speechRequested(prepared.token)
         } else audioSession.completed()
     }
     override fun onSensorChanged(event: SensorEvent) {

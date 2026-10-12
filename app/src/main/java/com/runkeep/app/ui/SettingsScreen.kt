@@ -49,6 +49,10 @@ import kotlin.math.roundToInt
         }) {
             Text("허용 범위 ±${prefs.paceTolerance}초/km")
             Slider(prefs.paceTolerance.toFloat(), { app.updateSettings(prefs.copy(paceTolerance = it.roundToInt())) }, valueRange = 5f..60f, steps = 10)
+            DomainSelectionField("코칭 반응", if (prefs.paceCoachingMode == PaceCoachingMode.IMMEDIATE) "즉시" else "안정 확인",
+                listOf(SelectionChoice("IMMEDIATE", "즉시", "허용 범위를 벗어나면 바로 안내"),
+                    SelectionChoice("STABLE", "안정 확인", "작은 이탈·반대 방향은 새 위치로 확인")),
+                prefs.paceCoachingMode.name, { app.updateSettings(prefs.copy(paceCoachingMode = PaceCoachingMode.valueOf(it))) })
             Text("회전 ${prefs.turnLeadMeters}m 전 안내")
             Slider(prefs.turnLeadMeters.toFloat(), { app.updateSettings(prefs.copy(turnLeadMeters = it.roundToInt())) }, valueRange = 10f..100f, steps = 8)
             ToggleRow("계획 완료 시 페이스 알림 끄기", prefs.stopCoachAtEnd,
