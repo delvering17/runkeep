@@ -1,12 +1,8 @@
 package com.runkeep.app.tracking
 
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.media.*
 import android.os.SystemClock
-import androidx.core.content.ContextCompat
 import com.runkeep.core.*
 import kotlinx.coroutines.*
 import java.io.Closeable
@@ -23,6 +19,8 @@ class PaceAlarmPlayer(context: Context, sharedFocus: RunAudioFocus? = null) : Cl
     val error = mutableError.asStateFlow()
     private val mutablePlaying = MutableStateFlow(false)
     val playing = mutablePlaying.asStateFlow()
+    private val mutableInterruptions = MutableStateFlow(0L)
+    val interruptions = mutableInterruptions.asStateFlow()
     private var retryAt = 0L
     private var closed = false
     private var volume = .5f
@@ -32,21 +30,11 @@ class PaceAlarmPlayer(context: Context, sharedFocus: RunAudioFocus? = null) : Cl
     private val focus = sessionFocus.client { change ->
         when (change) {
             AudioManager.AUDIOFOCUS_GAIN -> output.focusGained()
-            AudioManager.AUDIOFOCUS_LOSS -> { output.interrupt(permanent = true); silence(); releaseFocus() }
+            AudioManager.AUDIOFOCUS_LOSS -> { mutableInterruptions.value++; output.interrupt(permanent = true); silence(); releaseFocus() }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                output.interrupt(permanent = false); silence()
+                mutableInterruptions.value++; output.interrupt(permanent = false); silence()
             }
         }
-    }
-    private val noisy = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
-                output.interrupt(permanent = true); silence(); releaseFocus()
-            }
-        }
-    }
-    init {
-        ContextCompat.registerReceiver(this.context, noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     fun allowResume() { releaseFocus(); output.allowResume(); retryAt = 0L }
@@ -103,7 +91,7 @@ class PaceAlarmPlayer(context: Context, sharedFocus: RunAudioFocus? = null) : Cl
     }
     override fun close() {
         if (closed) return
-        closed = true; stop(); scope.cancel(); context.unregisterReceiver(noisy)
+        closed = true; stop(); scope.cancel()
         focus.close(); if (ownsFocus) sessionFocus.close()
     }
 }

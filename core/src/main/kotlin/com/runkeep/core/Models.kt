@@ -26,6 +26,7 @@ fun newId(): String = UUID.randomUUID().toString()
 }
 @Serializable enum class StepKind { DISTANCE, TIME }
 @Serializable enum class PaceCoachingMode { IMMEDIATE, STABLE }
+@Serializable enum class MusicFocusPolicy { DUCK, PAUSE }
 @Serializable data class PlanStep(val name: String = "달리기", val kind: StepKind, val amount: Double, val paceSeconds: Int) {
     init { require(amount.isFinite() && amount > 0); require(paceSeconds in 120..1800) }
     val expectedMeters get() = if (kind == StepKind.DISTANCE) amount else amount / paceSeconds * 1000
@@ -52,7 +53,8 @@ fun newId(): String = UUID.randomUUID().toString()
     val startDelaySeconds: Int = 0,
     val startDelayPresetSeconds: Int = 5, val cadencePresetSpm: Int = PaceFeedbackPolicy.DEFAULT_CADENCE_SPM,
     val paceCoachingMode: PaceCoachingMode = PaceCoachingMode.IMMEDIATE,
-    val periodicPaceVoice: Boolean = false, val periodicPaceSeconds: Int = 30
+    val periodicPaceVoice: Boolean = false, val periodicPaceSeconds: Int = 30,
+    val musicFocusPolicy: MusicFocusPolicy = MusicFocusPolicy.DUCK
 ) {
     fun normalized(): Preferences = copy(
         paceTolerance = paceTolerance.coerceIn(5, 60),

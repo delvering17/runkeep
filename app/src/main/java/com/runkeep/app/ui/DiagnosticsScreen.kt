@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.runkeep.app.BuildConfig
 import com.runkeep.app.RunkeepApp
 import com.runkeep.app.tracking.PaceAlarmPlayer
+import com.runkeep.app.tracking.RunAudioFocus
 import com.runkeep.app.tracking.PositionPhase
 import com.runkeep.app.tracking.SpeechPlayback
 import com.runkeep.app.tracking.SpeechPlayer
@@ -83,11 +84,13 @@ import kotlin.math.roundToInt
 @Composable fun AudioSettingsScreen(app: RunkeepApp, prefs: Preferences) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
-    val speech = remember(context) { SpeechPlayer(context) }
-    val alarm = remember(context) { PaceAlarmPlayer(context) }
+    val audioFocus = remember(context) { RunAudioFocus(context, prefs.musicFocusPolicy) }
+    val speech = remember(context, audioFocus) { SpeechPlayer(context, audioFocus) }
+    val alarm = remember(context, audioFocus) { PaceAlarmPlayer(context, audioFocus) }
     val speechPlayback by speech.playback.collectAsStateWithLifecycle()
     val speechStatus by speech.status.collectAsStateWithLifecycle()
     val alarmPlaying by alarm.playing.collectAsStateWithLifecycle()
+    val alarmInterruptions by alarm.interruptions.collectAsStateWithLifecycle()
     val alarmError by alarm.error.collectAsStateWithLifecycle()
     val live by app.live.collectAsStateWithLifecycle()
     val allowed = audioPreviewAllowed(live.summary?.status)
@@ -121,8 +124,9 @@ import kotlin.math.roundToInt
     DisposableEffect(owner, speech, alarm) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) stopLatest() }
         owner.lifecycle.addObserver(observer)
-        onDispose { owner.lifecycle.removeObserver(observer); speech.close(); alarm.close() }
+        onDispose { owner.lifecycle.removeObserver(observer); speech.close(); alarm.close(); audioFocus.close() }
     }
+    LaunchedEffect(prefs.musicFocusPolicy) { audioFocus.setPolicy(prefs.musicFocusPolicy) }
     LaunchedEffect(allowed) { if (!allowed) stop() }
     LaunchedEffect(speechPlayback, preview.request) {
         if (preview.sample?.speech == true && preview.active) {
@@ -148,6 +152,12 @@ import kotlin.math.roundToInt
             alarm.stop(); preview = preview.failed(); failure = currentError
         }
     }
+    LaunchedEffect(alarmInterruptions) {
+        if (alarmInterruptions > 0 && preview.sample?.speech == false && (preview.active || preview.armed)) {
+            alarm.stop(); preview = preview.stopped()
+            failure = "오디오 연결이 중단됐습니다. 다시 들어보기를 눌러주세요."
+        }
+    }
     LaunchedEffect(prefs.voiceVolume, prefs.voiceSpeed, prefs.voicePitch, prefs.paceAlarmVolume, prefs.cadenceTargetSpm,
         prefs.readPaceStatus, prefs.readCurrentPace, prefs.readTargetPace,
         preview.armed, preview.sample, preview.request, allowed) {
@@ -158,6 +168,11 @@ import kotlin.math.roundToInt
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Section("음성 안내")
+        DomainSelectionField("안내 중 다른 음악", if (prefs.musicFocusPolicy == MusicFocusPolicy.DUCK) "음량 낮춤 요청" else "일시정지 요청",
+            listOf(SelectionChoice("DUCK", "음량 낮춤 요청"), SelectionChoice("PAUSE", "일시정지 요청")),
+            prefs.musicFocusPolicy.name, { app.updateSettings(prefs.copy(musicFocusPolicy = MusicFocusPolicy.valueOf(it))) })
+        Text("음성·경보·메트로놈에 적용됩니다. 지속 메트로놈은 재생 중 요청을 유지하며 음악 앱·Android에 따라 반응이 다릅니다.",
+            style = MaterialTheme.typography.bodySmall)
         ToggleRow("앱 전체 음성 안내", prefs.voice) { app.updateSettings(prefs.copy(voice = it)) }
         Section("목표 이탈 음성")
         ToggleRow("페이스 음성 안내", prefs.paceVoice, "길 안내·거리 안내·경보음·메트로놈과 별개입니다.") { app.updateSettings(prefs.copy(paceVoice = it)) }
