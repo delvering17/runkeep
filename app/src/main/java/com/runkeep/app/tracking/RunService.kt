@@ -83,6 +83,7 @@ class RunService : Service(), SensorEventListener {
                             publish(); syncAudio(); speak()
                         }
                         is Event.Settings -> {
+                            audioFocus?.setPolicy(event.value.musicFocusPolicy)
                             engine?.updateFeedbackPreferences(event.value, SystemClock.elapsedRealtime())
                             if (event.value.paceAlarm && !previousAlarmEnabled || event.value.metronome && !previousMetronomeEnabled)
                                 alarmPlayer?.allowResume()
@@ -290,7 +291,7 @@ class RunService : Service(), SensorEventListener {
     }
     private fun openAudioSession() {
         closeAudioSession()
-        audioFocus = RunAudioFocus(this)
+        audioFocus = RunAudioFocus(this, app.settings.value.musicFocusPolicy)
         speech = SpeechPlayer(this, audioFocus)
         alarmPlayer = PaceAlarmPlayer(this, audioFocus)
     }
