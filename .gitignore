@@ -1,0 +1,24 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.idea/
+*.iml
+*.jks
+*.keystore
+.DS_Store
+captures/
+
+# Local credentials and generated personal data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.apk
+*.aab
+*.db
+*.sqlite
+*.sqlite3
+/exports/
+/private-data/
