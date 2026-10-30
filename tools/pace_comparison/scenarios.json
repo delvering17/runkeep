@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "baseline_commit": "9500d1f5d14882f65bfe5427ef8905d921750982",
+  "target_s_per_km": 360,
+  "tolerance_s_per_km": 10,
+  "scenarios": [
+    {"name":"steady_clean","duration":180,"legs":[[0,360]],"noise_m":0},
+    {"name":"steady_noise_03","duration":180,"legs":[[0,360]],"noise_m":0.3},
+    {"name":"steady_noise_2","duration":180,"legs":[[0,360]],"noise_m":2},
+    {"name":"steady_noise_6","duration":180,"legs":[[0,360]],"noise_m":6},
+    {"name":"steady_noise_2_phase","duration":180,"legs":[[0,360]],"noise_m":2,"phase":1.7},
+    {"name":"accelerate_decelerate","duration":180,"legs":[[0,420],[60,300],[120,420]],"noise_m":0},
+    {"name":"accelerate_noise","duration":180,"legs":[[0,420],[60,300],[120,420]],"noise_m":2},
+    {"name":"short_intervals","duration":140,"legs":[[0,360],[40,300],[50,420],[60,300],[70,420],[80,300],[90,420],[100,360]],"noise_m":0},
+    {"name":"boundary_truth","duration":150,"legs":[[0,360],[40,349],[50,351],[60,349],[70,351],[80,349],[90,351],[100,360]],"noise_m":0.3},
+    {"name":"boundary_noise","duration":180,"legs":[[0,360]],"noise_m":0.3,"low_frequency_m":1.8},
+    {"name":"stationary_speed_zero","duration":90,"legs":[[0,0]],"noise_m":2},
+    {"name":"stationary_no_speed","duration":90,"legs":[[0,0]],"noise_m":3,"speed_mode":"missing","accuracy":3},
+    {"name":"bad_accuracy_return","duration":120,"legs":[[0,360]],"noise_m":0.3,"bad_accuracy":[40,50]},
+    {"name":"outage_return","duration":140,"legs":[[0,360]],"noise_m":0.3,"outage":[40,65]},
+    {"name":"pause_resume","duration":140,"legs":[[0,360],[40,0],[60,300]],"noise_m":0.3,"pause":[40,60]},
+    {"name":"irregular_updates","duration":180,"legs":[[0,420],[60,300],[120,420]],"noise_m":0.3,"intervals_ms":[500,1500,4000,1000,3000]},
+    {"name":"sparse_window_boundary","duration":140,"legs":[[0,360],[60,300]],"noise_m":0,"intervals_ms":[4000]},
+    {"name":"stale_out_of_order_jump","duration":140,"legs":[[0,360]],"noise_m":0.3,"outage":[40,45],"stale_at":45,"out_of_order_at":70,"jump_at":90},
+    {"name":"sensor_missing","duration":140,"legs":[[0,360],[60,300]],"noise_m":0.3,"speed_mode":"missing"},
+    {"name":"sensor_biased","duration":140,"legs":[[0,360],[60,300]],"noise_m":0.3,"speed_bias":0.3},
+    {"name":"sensor_noisy","duration":140,"legs":[[0,360],[60,300]],"noise_m":0.3,"speed_noise":0.3}
+  ]
+}

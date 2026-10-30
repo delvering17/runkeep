@@ -1,0 +1,269 @@
+{
+  "baseline_commit": "9500d1f5d14882f65bfe5427ef8905d921750982",
+  "fixture_sha256": "11c0b17b7a9723ca10cff072bcc88c87e966119596d48c6374cd9c6967e962ef",
+  "virtual_audio": {
+    "start_delay_s": 2,
+    "duration_s": 4,
+    "blocked_s": [
+      [
+        60,
+        68
+      ]
+    ],
+    "repeat_s": 30
+  },
+  "pipeline": [
+    {
+      "scenario": "steady_clean",
+      "truth_m": 500.0,
+      "recorded_m": 500.0,
+      "raw_polyline_m": 500.0,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "steady_noise_03",
+      "truth_m": 500.0,
+      "recorded_m": 501.53,
+      "raw_polyline_m": 501.53,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "steady_noise_2",
+      "truth_m": 500.0,
+      "recorded_m": 602.495,
+      "raw_polyline_m": 607.528,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "steady_noise_6",
+      "truth_m": 500.0,
+      "recorded_m": 1356.12,
+      "raw_polyline_m": 1398.468,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 23
+      }
+    },
+    {
+      "scenario": "steady_noise_2_phase",
+      "truth_m": 500.0,
+      "recorded_m": 599.077,
+      "raw_polyline_m": 604.557,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "accelerate_decelerate",
+      "truth_m": 485.714,
+      "recorded_m": 485.714,
+      "raw_polyline_m": 485.714,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "accelerate_noise",
+      "truth_m": 485.714,
+      "recorded_m": 595.533,
+      "raw_polyline_m": 603.397,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "short_intervals",
+      "truth_m": 393.651,
+      "recorded_m": 393.651,
+      "raw_polyline_m": 393.651,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "boundary_truth",
+      "truth_m": 421.43,
+      "recorded_m": 423.062,
+      "raw_polyline_m": 423.062,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "boundary_noise",
+      "truth_m": 500.0,
+      "recorded_m": 500.598,
+      "raw_polyline_m": 500.598,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "stationary_speed_zero",
+      "truth_m": 0,
+      "recorded_m": 0.0,
+      "raw_polyline_m": 225.015,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "stationary_no_speed",
+      "truth_m": 0,
+      "recorded_m": 310.583,
+      "raw_polyline_m": 337.523,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "bad_accuracy_return",
+      "truth_m": 333.333,
+      "recorded_m": 303.844,
+      "raw_polyline_m": 334.401,
+      "rejected": {
+        "accuracy": 10,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "outage_return",
+      "truth_m": 388.889,
+      "recorded_m": 317.5,
+      "raw_polyline_m": 389.843,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "pause_resume",
+      "truth_m": 377.778,
+      "recorded_m": 375.621,
+      "raw_polyline_m": 378.696,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "irregular_updates",
+      "truth_m": 485.714,
+      "recorded_m": 486.401,
+      "raw_polyline_m": 486.401,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "sparse_window_boundary",
+      "truth_m": 433.333,
+      "recorded_m": 433.333,
+      "raw_polyline_m": 433.333,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "stale_out_of_order_jump",
+      "truth_m": 388.889,
+      "recorded_m": 370.525,
+      "raw_polyline_m": 543.651,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 1,
+        "out_of_order": 1,
+        "jump": 1
+      }
+    },
+    {
+      "scenario": "sensor_missing",
+      "truth_m": 433.333,
+      "recorded_m": 393.777,
+      "raw_polyline_m": 434.393,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "sensor_biased",
+      "truth_m": 433.333,
+      "recorded_m": 434.393,
+      "raw_polyline_m": 434.393,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    },
+    {
+      "scenario": "sensor_noisy",
+      "truth_m": 433.333,
+      "recorded_m": 434.393,
+      "raw_polyline_m": 434.393,
+      "rejected": {
+        "accuracy": 0,
+        "stale": 0,
+        "out_of_order": 0,
+        "jump": 0
+      }
+    }
+  ]
+}

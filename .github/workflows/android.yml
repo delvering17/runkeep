@@ -1,0 +1,81 @@
+name: Android build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Compile both map variants and run checks
+        run: ./gradlew :core:test :app:assembleKakaoDebug :app:lintKakaoDebug :app:assemblePreviewDebug :app:lintPreviewDebug --stacktrace
+      - name: Save test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            core/build/reports/tests/
+            core/build/test-results/test/
+            app/build/reports/lint-results-*
+          if-no-files-found: ignore
+      - name: Check GPS simulator
+        run: ./gradlew :app:testPreviewSimulationUnitTest :app:assemblePreviewSimulation :app:lintPreviewSimulation :app:assembleKakaoSimulation :app:lintKakaoSimulation --stacktrace
+      - name: Save simulator reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gps-simulator-reports
+          path: |
+            app/build/reports/tests/testPreviewSimulationUnitTest/
+            app/build/test-results/testPreviewSimulationUnitTest/
+            app/build/reports/lint-results-*Simulation*
+          if-no-files-found: ignore
+      - name: Summarize cloud validation
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          import xml.etree.ElementTree as ET
+          for folder in ('core/build/test-results/test', 'app/build/test-results/testPreviewSimulationUnitTest'):
+              files = list(Path(folder).glob('TEST-*.xml'))
+              counts = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
+              for file in files:
+                  suite = ET.parse(file).getroot()
+                  for key in counts:
+                      counts[key] += int(suite.get(key, '0'))
+              print(folder, 'reports=', len(files), counts)
+          for file in sorted(Path('app/build/reports').glob('lint-results-*.xml')):
+              issues = ET.parse(file).getroot().findall('issue')
+              errors = sum(issue.get('severity') in ('Error', 'Fatal') for issue in issues)
+              warnings = sum(issue.get('severity') == 'Warning' for issue in issues)
+              print(file.name, 'errors=', errors, 'warnings=', warnings)
+          file = Path('core/build/classes/kotlin/main/com/runkeep/core/RunEngine.class')
+          if file.exists():
+              major = struct.unpack('>H', file.read_bytes()[6:8])[0]
+              print('RunEngine JVM class major=', major)
+              assert major == 65
+          PY
