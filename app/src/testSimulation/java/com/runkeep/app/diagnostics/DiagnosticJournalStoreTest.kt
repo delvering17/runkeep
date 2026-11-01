@@ -51,9 +51,9 @@ class DiagnosticJournalStoreTest {
     @Test fun `total limit evicts oldest other workout while protecting current workout`() = withRoot { root ->
         var time = 1_000L
         val store = DiagnosticJournalStore(root, now = { time }, runLimit = 1024, totalLimit = 2100)
-        while (store.append("old", event(DiagnosticKind.CHECKPOINT))) Unit
+        while (store.append("old", event(DiagnosticKind.CHECKPOINT))) {}
         time++
-        while (store.append("current", event(DiagnosticKind.CHECKPOINT))) Unit
+        while (store.append("current", event(DiagnosticKind.CHECKPOINT))) {}
         assertNull(store.read("old"))
         assertNotNull(store.read("current"))
         assertTrue(root.listFiles()!!.sumOf { it.length() } <= 2100)
