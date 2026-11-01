@@ -15,7 +15,22 @@ class MapRouteUpdates<H>(private val sink: MapRouteSink<H>, private val chunkSiz
     private data class Entry<H>(val handle: H, val points: List<Coordinate>)
     private val entries = linkedMapOf<Key, Entry<H>>()
 
-    fun reconcile(planned: List<Coordinate>, tracks: List<List<Coordinate>>) {
+    fun reconcile(planned: List<Coordinate>, tracks: List<List<Coordinate>>, diagnostic: ((MapDiagnostic) -> Unit)? = null) {
+        val counts = Counts()
+        fun result(reason: DiagnosticReason) = mapDiagnostic(reason, planned, tracks).copy(
+            createdRoutes = counts.created, updatedRoutes = counts.updated, removedRoutes = counts.removed)
+        try {
+            applyRoutes(planned, tracks, counts)
+            reportMapDiagnostic(diagnostic, result(if (counts.created + counts.updated + counts.removed == 0)
+                DiagnosticReason.UPDATE_UNCHANGED else DiagnosticReason.UPDATE_APPLIED))
+        } catch (failure: Exception) {
+            reportMapDiagnostic(diagnostic, result(DiagnosticReason.UPDATE_FAILED))
+            throw failure
+        }
+    }
+
+    private class Counts(var created: Int = 0, var updated: Int = 0, var removed: Int = 0)
+    private fun applyRoutes(planned: List<Coordinate>, tracks: List<List<Coordinate>>, counts: Counts) {
         val retained = mutableSetOf<Key>()
         fun reconcilePart(kind: MapRouteKind, track: Int, points: List<Coordinate>) {
             var start = 0
@@ -29,8 +44,9 @@ class MapRouteUpdates<H>(private val sink: MapRouteSink<H>, private val chunkSiz
                     previous.points.indices.all { previous.points[it] == points[start + it] }
                 if (!unchanged) {
                     val snapshot = points.subList(start, end).toList()
-                    val handle = if (previous == null) sink.create(kind, snapshot) else {
+                    val handle = if (previous == null) sink.create(kind, snapshot).also { counts.created++ } else {
                         sink.update(kind, previous.handle, snapshot)
+                        counts.updated++
                         previous.handle
                     }
                     entries[key] = Entry(handle, snapshot)
@@ -46,6 +62,7 @@ class MapRouteUpdates<H>(private val sink: MapRouteSink<H>, private val chunkSiz
             val entry = iterator.next()
             if (entry.key !in retained) {
                 sink.remove(entry.value.handle)
+                counts.removed++
                 iterator.remove()
             }
         }

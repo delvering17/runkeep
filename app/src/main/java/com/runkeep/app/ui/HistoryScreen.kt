@@ -204,7 +204,7 @@ private fun recordSortLabel(sort: RecordSort): String = when (sort) {
     RecordSort.FASTEST -> "평균 페이스 빠른순"; RecordSort.SLOWEST -> "평균 페이스 느린순"
 }
 
-private enum class HistoryAction { EXPORT, DELETE }
+private enum class HistoryAction { DIAGNOSTIC, EXPORT, DELETE }
 private enum class HistoryHealthState { IDLE, CHECKING, REQUESTING_PERMISSION, PERMISSION, UNAVAILABLE, CHECK_FAILED, IMPORTING, SAVING, DIAGNOSING, EMPTY, IMPORT_FAILED, COMPLETE }
 private fun healthProgressLabel(state: HistoryHealthState): String = when (state) {
     HistoryHealthState.CHECKING -> "권한·운동 확인 중"
@@ -237,6 +237,8 @@ private fun healthProgressLabel(state: HistoryHealthState): String = when (state
     var expandedMap by rememberSaveable(run.id) { mutableStateOf(false) }
     var showMore by rememberSaveable(run.id) { mutableStateOf(false) }
     var showExportSelection by rememberSaveable(run.id) { mutableStateOf(false) }
+    var showDiagnosticExport by rememberSaveable(run.id) { mutableStateOf(false) }
+    val diagnosticModel: DiagnosticExportViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "diagnostic-${run.id}")
     var nextAction by remember(run.id) { mutableStateOf<HistoryAction?>(null) }
     var deleteConfirm by rememberSaveable(run.id) { mutableStateOf(false) }
     var deleting by remember(run.id) { mutableStateOf(false) }
@@ -256,7 +258,7 @@ private fun healthProgressLabel(state: HistoryHealthState): String = when (state
     var canDiagnose by remember(run.id) { mutableStateOf(false) }
     var preparingExport by remember(run.id) { mutableStateOf(false) }
     val fileExporter = rememberFileExporter { app.error.value = it }
-    val exporting = preparingExport || fileExporter.busy
+    val exporting = preparingExport || fileExporter.busy || diagnosticModel.busy
     val busy = permissionToken != null || healthState in setOf(HistoryHealthState.CHECKING, HistoryHealthState.REQUESTING_PERMISSION, HistoryHealthState.IMPORTING, HistoryHealthState.SAVING, HistoryHealthState.DIAGNOSING)
     val achievedGoal = run.goalActiveMs != null && run.goalMeters != null
     val presentation = remember(run, points, includeExtra) { RecordPresentation.from(run, points, includeExtra) }
@@ -466,6 +468,7 @@ private fun healthProgressLabel(state: HistoryHealthState): String = when (state
             val action = nextAction
             nextAction = null
             when (action) {
+                HistoryAction.DIAGNOSTIC -> showDiagnosticExport = true
                 HistoryAction.EXPORT -> showExportSelection = true
                 HistoryAction.DELETE -> deleteConfirm = true
                 null -> Unit
@@ -512,7 +515,8 @@ private fun healthProgressLabel(state: HistoryHealthState): String = when (state
                 }
             }) { padding ->
                 RunMap(run.course?.points ?: emptyList(), tracks = visible.groupBy { it.segment }.values.map { part -> part.map { it.coordinate } },
-                    modifier = Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding()), showRecordEndpoints = true)
+                    modifier = Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding()), showRecordEndpoints = true,
+                    onDiagnostic = { result -> if (app.settings.value.diagnosticRecording) app.diagnostics.historyMap(run.id, run.startedAt, result) })
             }
         } else {
             LazyColumn(Modifier.weight(1f), state = detailScroll, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -523,7 +527,8 @@ private fun healthProgressLabel(state: HistoryHealthState): String = when (state
                 }
                 item(key = "map-title") { Section("기록 지도", trailing = { TextButton(onClick = { expandedMap = true }) { Text("확대") } }) }
                 item(key = "map") { RunMap(run.course?.points ?: emptyList(), tracks = visible.groupBy { it.segment }.values.map { part -> part.map { it.coordinate } },
-                    modifier = Modifier.fillMaxWidth().height(240.dp), showRecordEndpoints = true) }
+                    modifier = Modifier.fillMaxWidth().height(240.dp), showRecordEndpoints = true,
+                    onDiagnostic = { result -> if (app.settings.value.diagnosticRecording) app.diagnostics.historyMap(run.id, run.startedAt, result) }) }
                 item(key = "additional") { HistoryAdditionalMetrics(displayedRun, visible) }
                 item(key = "split-title") { Section("구간 기록", trailing = { TextButton(onClick = { splitPage = true }) { Text("전체 구간") } }) }
                 if (splits.isEmpty()) item { Text("구간 기록 없음") }
@@ -581,9 +586,12 @@ private fun healthProgressLabel(state: HistoryHealthState): String = when (state
     }) {
         TextButton(onClick = { showMore = false; nextAction = HistoryAction.EXPORT }, enabled = loaded && !deleting && !exporting,
             modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.FileUpload, null); Spacer(Modifier.width(6.dp)); Text(if (preparingExport) "내보내기 준비 중…" else if (fileExporter.busy) "내보내는 중…" else "내보내기") }
+        TextButton(onClick = { showMore = false; nextAction = HistoryAction.DIAGNOSTIC }, enabled = !deleting && !exporting,
+            modifier = Modifier.fillMaxWidth()) { Text("진단 자료 저장 · 공유") }
         if (run.status == RunStatus.FINISHED) TextButton(onClick = { showMore = false; nextAction = HistoryAction.DELETE },
             enabled = !deleting && !busy && !exporting, modifier = Modifier.fillMaxWidth()) { Text("기록 삭제", color = MaterialTheme.colorScheme.error) }
     }
+    DiagnosticExportHost(run.id, showDiagnosticExport, { showDiagnosticExport = false }, diagnosticModel, run.status == RunStatus.FINISHED)
     if (showExportSelection) ExportSelectionSheet(
         options = buildList {
             add(ExportChoice.RUN_GPX)
@@ -642,11 +650,16 @@ private fun healthProgressLabel(state: HistoryHealthState): String = when (state
         }
     }
     if (deleteConfirm) AlertDialog(onDismissRequest = { if (!deleting) deleteConfirm = false }, title = { Text("기록을 삭제할까요?") },
-        text = { Text("전체 위치와 가져온 심박수가 함께 삭제됩니다. 되돌릴 수 없습니다.") },
+        text = { Text("전체 위치·심박수·진단·공유 임시 사본이 함께 삭제됩니다. 되돌릴 수 없습니다.") },
         confirmButton = { TextButton(onClick = {
             deleting = true
             scope.launch {
-                runCatching { dao.deleteRun(run.id); deleteConfirm = false; deleted() }
+                runCatching {
+                    diagnosticModel.invalidate()
+                    app.diagnostics.delete(run.id)
+                    withContext(Dispatchers.IO) { com.runkeep.app.diagnostics.DiagnosticShareFiles(java.io.File(app.cacheDir, "diagnostic-shares")).deleteRun(run.id) }
+                    dao.deleteRun(run.id); deleteConfirm = false; deleted()
+                }
                     .onFailure { app.error.value = "삭제 실패: ${it.message}" }
                 deleting = false
             }

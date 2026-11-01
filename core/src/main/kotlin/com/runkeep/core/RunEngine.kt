@@ -2,7 +2,16 @@ package com.runkeep.core
 
 import kotlin.math.*
 
-class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: List<TrackPoint> = emptyList()) {
+class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: List<TrackPoint> = emptyList(),
+    private val diagnostic: ((EngineDiagnostic) -> Unit)? = null) {
+    private var disconnectReason = DiagnosticReason.FIRST_FIX
+    private fun report(kind: DiagnosticKind, reason: DiagnosticReason, at: Long, fix: LocationFix? = null, pointIndex: Int? = null) {
+        runCatching { diagnostic?.invoke(EngineDiagnostic(kind, reason, at, fix, pointIndex, summary.segment, summary.status, summary.activeMs, summary.meters)) }
+    }
+    private fun excluded(reason: DiagnosticReason, fix: LocationFix, at: Long): TrackPoint? {
+        report(DiagnosticKind.LOCATION_DECISION, reason, at, fix)
+        return null
+    }
     var summary = initial; private set
     val points = savedPoints.toMutableList()
     private var tickAt: Long? = null
@@ -72,37 +81,38 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
     }
 
     fun ingest(fix: LocationFix, cadence: Double? = null, receivedAtMs: Long = maxOf(fix.monotonicMs, tickAt ?: fix.monotonicMs)): TrackPoint? {
-        if (fix.monotonicMs < resumeAt || lastFix?.let { fix.monotonicMs <= it.monotonicMs } == true) return null
+        if (fix.monotonicMs < resumeAt) return excluded(DiagnosticReason.BEFORE_RESUME, fix, receivedAtMs)
+        if (lastFix?.let { fix.monotonicMs <= it.monotonicMs } == true) return excluded(DiagnosticReason.OUT_OF_ORDER, fix, receivedAtMs)
         if (receivedAtMs - fix.monotonicMs !in 0..AutoPauseDetector.MAX_GAP_MS) {
-            autoPause.reset("stale_fix"); lastFix = null
+            autoPause.reset("stale_fix"); lastFix = null; disconnectReason = if (receivedAtMs < fix.monotonicMs) DiagnosticReason.FUTURE_SAMPLE else DiagnosticReason.STALE
             currentPace = null; clearPaceWindow(); gpsMessage = "GPS 신호를 확인해주세요"
             coach(receivedAtMs)
-            return null
+            return excluded(if (receivedAtMs < fix.monotonicMs) DiagnosticReason.FUTURE_SAMPLE else DiagnosticReason.STALE, fix, receivedAtMs)
         }
         updateClock(fix.monotonicMs, fix.epochMs, evaluateAutoPause = false)
-        if (summary.status == RunStatus.PAUSED || summary.status == RunStatus.INTERRUPTED || summary.status == RunStatus.FINISHED) return null
+        if (summary.status == RunStatus.PAUSED || summary.status == RunStatus.INTERRUPTED || summary.status == RunStatus.FINISHED) return excluded(DiagnosticReason.INACTIVE, fix, receivedAtMs)
         if (!fix.accuracy.isFinite() || fix.accuracy < 0 || fix.accuracy > 25) {
-            gpsMessage = "GPS 정확도가 낮습니다"; currentPace = null; autoPause.reset("accuracy"); lastFix = null; clearPaceWindow(); coach(fix.monotonicMs); return null
+            gpsMessage = "GPS 정확도가 낮습니다"; currentPace = null; autoPause.reset("accuracy"); lastFix = null; disconnectReason = DiagnosticReason.ACCURACY; clearPaceWindow(); coach(fix.monotonicMs); return excluded(DiagnosticReason.ACCURACY, fix, receivedAtMs)
         }
         val previous = lastFix
         val seconds = previous?.let { (fix.monotonicMs - it.monotonicMs) / 1000.0 } ?: 0.0
         val delta = previous?.let { Geo.distance(it.coordinate, fix.coordinate) } ?: 0.0
         if (previous != null && seconds < 15 && delta / seconds > 12) {
-            gpsMessage = "GPS 위치 튐을 제외했습니다"; currentPace = null; providerPace.clear(); providerPaceUsed = false; autoPause.reset("position_jump"); coach(fix.monotonicMs); return null
+            gpsMessage = "GPS 위치 튐을 제외했습니다"; currentPace = null; providerPace.clear(); providerPaceUsed = false; autoPause.reset("position_jump"); coach(fix.monotonicMs); return excluded(DiagnosticReason.POSITION_JUMP, fix, receivedAtMs)
         }
         if (summary.status == RunStatus.RUNNING && preferences.autoPause) {
             autoPause.observeRunning(fix, previous)
             if (autoPause.shouldPause(fix.monotonicMs)) {
                 lastFix = fix
                 pause(true); announcements += Announcement.Message(AnnouncementKind.STATE, "자동 일시정지", fix.monotonicMs)
-                return null
+                return excluded(DiagnosticReason.AUTO_PAUSE, fix, receivedAtMs)
             }
         }
         val moving = fix.speed?.takeIf { it.isFinite() && it >= 0 }?.let { it >= 0.7f } ?: (delta > max(2.5, fix.accuracy / 2.0))
         val wasAutoPaused = summary.status == RunStatus.AUTO_PAUSED
         if (summary.status == RunStatus.AUTO_PAUSED) {
             lastFix = fix
-            if (!autoPause.shouldResume(fix, previous, delta)) return null
+            if (!autoPause.shouldResume(fix, previous, delta)) return excluded(DiagnosticReason.AUTO_PAUSE_WAIT, fix, receivedAtMs)
             val resumedAt = maxOf(receivedAtMs, tickAt ?: receivedAtMs)
             resume(resumedAt); announcements += Announcement.Message(AnnouncementKind.STATE, "달리기를 재개합니다", resumedAt)
         }
@@ -111,8 +121,11 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         val added = if (validLeg && moving && delta >= 0.8) delta else 0.0
         val before = summary
         var segment = summary.segment
+        val splitReason = if (previous == null) disconnectReason else DiagnosticReason.GAP_OVER_15_SECONDS
         if (previous == null || seconds > 15) { segment++; clearPaceWindow() }
         summary = summary.copy(meters = summary.meters + added, segment = segment)
+        if (previous == null || seconds > 15) report(DiagnosticKind.SEGMENT, splitReason, receivedAtMs, fix)
+        disconnectReason = DiagnosticReason.FIRST_FIX
         lastFix = fix
         gpsMessage = "GPS ±${fix.accuracy.roundToInt()}m"
         if (summary.goalMeters != null && summary.goalActiveMs == null && summary.meters >= summary.goalMeters!!) {
@@ -150,6 +163,7 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         } else if (distanceDue) {
             enqueueDistancePace(fix.monotonicMs)
         }
+        report(DiagnosticKind.LOCATION_DECISION, DiagnosticReason.ACCEPTED, receivedAtMs, fix, points.lastIndex)
         return point
     }
 
@@ -422,7 +436,7 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
     fun invalidatePace(now: Long) {
         currentPace = null; clearPaceWindow(); waypointTracker?.disconnect(); courseDistance?.disconnect(); coach(now)
     }
-    fun pause(automatic: Boolean = false) {
+    fun pause(automatic: Boolean = false, atMs: Long = tickAt ?: 0) {
         if (summary.status != RunStatus.RUNNING && (automatic || summary.status != RunStatus.AUTO_PAUSED)) return
         if (automatic) lastAutoPauseTransition = autoPause.diagnostics.copy(reason = "pause_confirmed")
         summary = summary.copy(status = if (automatic) RunStatus.AUTO_PAUSED else RunStatus.PAUSED)
@@ -430,16 +444,21 @@ class RunEngine(initial: RunSummary, val preferences: Preferences, savedPoints: 
         waypointTracker?.disconnect(); courseDistance?.disconnect()
         resetDistancePace(); resetPeriodicPace()
         autoPause.reset(if (automatic) "auto_paused" else "manual_paused")
-        if (!automatic) lastFix = null
+        if (!automatic) { lastFix = null; disconnectReason = DiagnosticReason.MANUAL_PAUSE }
+        report(DiagnosticKind.STATE, if (automatic) DiagnosticReason.AUTO_PAUSE else DiagnosticReason.MANUAL_PAUSE, atMs)
     }
     fun resume(now: Long) {
-        if (summary.status == RunStatus.AUTO_PAUSED) lastAutoPauseTransition = autoPause.diagnostics.copy(reason = "resume_confirmed")
+        val automatic = summary.status == RunStatus.AUTO_PAUSED
+        if (automatic) lastAutoPauseTransition = autoPause.diagnostics.copy(reason = "resume_confirmed")
         summary = summary.copy(status = RunStatus.RUNNING, segment = summary.segment + 1)
         paceFeedback.reset(); clearPaceWarnings()
         tickAt = now; resumeAt = now; lastFix = null; autoPause.reset("resumed"); clearPaceWindow(); currentPace = null
         waypointTracker?.disconnect(); courseDistance?.disconnect()
         resetDistancePace(); resetPeriodicPace()
+        disconnectReason = if (automatic) DiagnosticReason.AUTO_RESUME else DiagnosticReason.MANUAL_RESUME
+        report(DiagnosticKind.STATE, disconnectReason, now)
+        report(DiagnosticKind.SEGMENT, disconnectReason, now)
     }
-    fun finish(epochMs: Long) { summary = summary.copy(status = RunStatus.FINISHED, endedAt = epochMs); paceFeedback.reset(); clearPaceWarnings(); resetDistancePace(); resetPeriodicPace() }
-    fun interrupt() { summary = summary.copy(status = RunStatus.INTERRUPTED); tickAt = null; lastFix = null; autoPause.reset("interrupted"); currentPace = null; paceFeedback.reset(); clearPaceWarnings(); resetDistancePace(); resetPeriodicPace() }
+    fun finish(epochMs: Long, atMs: Long = tickAt ?: 0) { summary = summary.copy(status = RunStatus.FINISHED, endedAt = epochMs); report(DiagnosticKind.STATE, DiagnosticReason.FINISHED, atMs); paceFeedback.reset(); clearPaceWarnings(); resetDistancePace(); resetPeriodicPace() }
+    fun interrupt(atMs: Long = tickAt ?: 0) { summary = summary.copy(status = RunStatus.INTERRUPTED); report(DiagnosticKind.STATE, DiagnosticReason.INTERRUPTED, atMs); disconnectReason = DiagnosticReason.INTERRUPTED; tickAt = null; lastFix = null; autoPause.reset("interrupted"); currentPace = null; paceFeedback.reset(); clearPaceWarnings(); resetDistancePace(); resetPeriodicPace() }
 }

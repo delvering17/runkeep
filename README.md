@@ -64,6 +64,7 @@ Android Studio에서 저장소를 열고 `kakaoDebug`를 선택하여 휴대폰�
 - [현재 페이스·코칭 정책](docs/PACE_COACHING_REVIEW.md)
 - [음악·오디오 포커스 정책](docs/MUSIC_AUDIO_FOCUS.md)
 - [GPS 시뮬레이터](docs/GPS_SIMULATOR.md)
+- [운동 진단 기록·파일 공유](docs/DIAGNOSTICS.md)
 - [검증 범위와 결과](docs/VALIDATION.md)
 
 문제나 개선 제안은 [GitHub Issues](https://github.com/delvering17/runkeep/issues)에 남길 수 있습니다. 위치·심박수·계정 정보가 포함된 원본 파일을 공개 이슈에 첨부할 필요는 없습니다.

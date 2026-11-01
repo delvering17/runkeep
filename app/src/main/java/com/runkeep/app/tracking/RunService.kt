@@ -77,14 +77,27 @@ class RunService : Service(), SensorEventListener {
                         is Event.Position -> {
                             val fix = event.state.fix
                             if (event.state.phase == PositionPhase.RECEIVING && fix != null && fix.elapsedRealtimeNanos > lastLocationNanos) {
-                                lastLocationNanos = fix.elapsedRealtimeNanos; process(fix)
+                                lastLocationNanos = fix.elapsedRealtimeNanos; process(fix, event.state.receivedAtMs ?: SystemClock.elapsedRealtime())
                             }
-                            if (event.state.phase != PositionPhase.RECEIVING) engine?.invalidatePace(SystemClock.elapsedRealtime())
+                            if (event.state.phase != PositionPhase.RECEIVING) {
+                                engine?.invalidatePace(SystemClock.elapsedRealtime())
+                                val reason = when (event.state.phase) {
+                                    PositionPhase.PERMISSION -> DiagnosticReason.PERMISSION
+                                    PositionPhase.DISABLED -> DiagnosticReason.LOCATION_DISABLED
+                                    PositionPhase.WAITING -> DiagnosticReason.WAITING
+                                    PositionPhase.ERROR -> DiagnosticReason.SOURCE_ERROR
+                                    else -> DiagnosticReason.SOURCE_IDLE
+                                }
+                                app.diagnostics.record(DiagnosticEvent(kind = DiagnosticKind.POSITION_SOURCE, reason = reason))
+                            }
                             publish(); syncAudio(); speak()
                         }
                         is Event.Settings -> {
                             audioFocus?.setPolicy(event.value.musicFocusPolicy)
-                            engine?.updateFeedbackPreferences(event.value, SystemClock.elapsedRealtime())
+                            engine?.let { e ->
+                                app.diagnostics.configure(e.summary, event.value, e.preferences)
+                                e.updateFeedbackPreferences(event.value, SystemClock.elapsedRealtime())
+                            }
                             if (event.value.paceAlarm && !previousAlarmEnabled || event.value.metronome && !previousMetronomeEnabled)
                                 alarmPlayer?.allowResume()
                             previousAlarmEnabled = event.value.paceAlarm
@@ -117,7 +130,8 @@ class RunService : Service(), SensorEventListener {
                     cancelPreparation()
                     finishPolicy.cancel(); finishText = null
                     stopRunSpeech()
-                    engine?.interrupt()
+                    engine?.interrupt(SystemClock.elapsedRealtime())
+                    app.diagnostics.stop(DiagnosticReason.INTERRUPTED, engine?.summary)
                     syncAudio(); publish(); stopWhenIdle()
                 }
             }
@@ -168,7 +182,7 @@ class RunService : Service(), SensorEventListener {
             PAUSE -> {
                 if (e.summary.status == RunStatus.RUNNING) {
                     stopRunSpeech()
-                    e.pause(); e.announcements += Announcement.Message(AnnouncementKind.STATE, "일시정지합니다", now)
+                    e.pause(atMs = SystemClock.elapsedRealtime()); e.announcements += Announcement.Message(AnnouncementKind.STATE, "일시정지합니다", now)
                 }
             }
             RESUME -> if (e.summary.status != RunStatus.RUNNING && e.summary.status != RunStatus.FINISHED) {
@@ -180,8 +194,10 @@ class RunService : Service(), SensorEventListener {
             FINISH -> {
                 alarmPlayer?.stop(); stopRunSpeech()
                 e.announcements.clear()
-                e.finish(System.currentTimeMillis())
+                e.finish(System.currentTimeMillis(), SystemClock.elapsedRealtime())
                 app.db.dao().checkpoint(e.summary)
+                app.diagnostics.tick(e.summary, e.points.size)
+                app.diagnostics.stop(DiagnosticReason.FINISHED, e.summary)
                 releaseTracking()
                 finishText = finishSpeechText(e.summary, e.points)
                 finishPolicy.begin(e.summary.id, SystemClock.elapsedRealtime())
@@ -224,7 +240,8 @@ class RunService : Service(), SensorEventListener {
         audioSession.attach(summary.id, app.live.value, newWorkout = true)
         steps.clear(); cadence = null
         recordAfterNanos = SystemClock.elapsedRealtimeNanos()
-        engine = RunEngine(summary, app.settings.value).also {
+        app.diagnostics.configure(summary, app.settings.value, app.settings.value)
+        engine = RunEngine(summary, app.settings.value, diagnostic = app.diagnostics::engine).also {
             it.tick(startedAtMs, summary.startedAt)
             it.announcements += workoutStartAnnouncement(startedAtMs)
         }
@@ -238,6 +255,7 @@ class RunService : Service(), SensorEventListener {
         app.live.value = app.live.value.copy(preparation = null)
     }
     private fun releaseTracking() {
+        app.location.diagnosticReceipt = null
         locationJob?.cancel(); locationJob = null
         locationLease?.close(); locationLease = null
         sensors.unregisterListener(this); registered = false
@@ -286,7 +304,8 @@ class RunService : Service(), SensorEventListener {
         openAudioSession()
         audioSession.attach(saved.id, app.live.value, newWorkout = false)
         val points = app.db.dao().points(saved.id).map { codec.decodeFromString<TrackPoint>(it.payload) }
-        engine = RunEngine(saved.copy(status = RunStatus.INTERRUPTED), app.settings.value, points)
+        app.diagnostics.configure(saved.copy(status = RunStatus.INTERRUPTED), app.settings.value, app.settings.value, recovery = true)
+        engine = RunEngine(saved.copy(status = RunStatus.INTERRUPTED), app.settings.value, points, app.diagnostics::engine)
         app.error.value = "중단된 기록을 복구했습니다. 재개하거나 종료해주세요. 중단 시간은 운동 시간에 포함하지 않습니다."
     }
     private fun openAudioSession() {
@@ -298,6 +317,7 @@ class RunService : Service(), SensorEventListener {
     private fun register() {
         if (registered) return
         check(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) { "정확한 위치 권한이 필요합니다" }
+        app.location.diagnosticReceipt = app.diagnostics::received
         locationLease = app.location.acquire()
         locationJob = scope.launch { app.location.state.collect { events.send(Event.Position(it)) } }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED) {
@@ -305,10 +325,16 @@ class RunService : Service(), SensorEventListener {
         }
         registered = true
     }
-    private suspend fun process(location: Location) {
+    private suspend fun process(location: Location, receivedAt: Long) {
         val e = engine ?: return
         val mono = location.elapsedRealtimeNanos / 1_000_000
-        if (SystemClock.elapsedRealtime() - mono > 10_000 || location.elapsedRealtimeNanos < recordAfterNanos) return
+        val excluded = serviceLocationExclusion(SystemClock.elapsedRealtime(), location.elapsedRealtimeNanos, recordAfterNanos)
+        if (excluded != null) {
+            if (excluded == DiagnosticReason.STALE) app.diagnostics.quality(false, excluded)
+            app.diagnostics.record(app.diagnostics.sample(location, receivedAt).copy(reason = excluded, stage = "service"))
+            return
+        }
+        app.diagnostics.record(app.diagnostics.sample(location, receivedAt).copy(reason = DiagnosticReason.FORWARDED, stage = "service_to_engine"))
         val point = e.ingest(LocationFix(Coordinate(location.latitude, location.longitude), location.time, mono,
             location.accuracy, if (location.hasAltitude()) location.altitude else null,
             if (location.hasSpeed()) location.speed else null,
@@ -322,6 +348,7 @@ class RunService : Service(), SensorEventListener {
         val e = engine ?: return
         val now = SystemClock.elapsedRealtime()
         e.tick(now, System.currentTimeMillis())
+        app.diagnostics.tick(e.summary, e.points.size)
         syncAudio()
         while (steps.isNotEmpty() && now - steps.first() > 20_000) steps.removeFirst()
         cadence = if (steps.size >= 6 && now > steps.first()) (steps.size - 1) * 60_000.0 / (now - steps.first()) else null
@@ -398,6 +425,8 @@ class RunService : Service(), SensorEventListener {
             .setContentText(text).setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
     }
     override fun onDestroy() {
+        app.diagnostics.record(DiagnosticEvent(kind = DiagnosticKind.INTERRUPTION, reason = DiagnosticReason.SERVICE_DESTROYED))
+        app.diagnostics.stop(DiagnosticReason.SERVICE_DESTROYED, engine?.summary)
         cancelPreparation(); finishPolicy.cancel(); finishText = null
         releaseTracking(); closeAudioSession()
         wakeLock?.let { if (it.isHeld) it.release() }
