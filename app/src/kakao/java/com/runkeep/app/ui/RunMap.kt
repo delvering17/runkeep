@@ -26,6 +26,10 @@ import com.kakao.vectormap.route.*
 import com.runkeep.app.BuildConfig
 import com.runkeep.app.RunkeepApp
 import com.runkeep.app.tracking.PositionPhase
+import com.runkeep.core.MapDiagnostic
+import com.runkeep.core.DiagnosticReason
+import com.runkeep.core.mapDiagnostic
+import com.runkeep.core.reportMapDiagnostic
 import com.runkeep.core.Coordinate
 import com.runkeep.core.Geo
 import com.runkeep.core.MapCameraPolicy
@@ -42,6 +46,8 @@ import kotlin.math.hypot
 import kotlin.math.abs
 import kotlinx.coroutines.delay
 
+private const val ROUTE_UPDATE_FAILURE = "경로 표시 갱신에 실패했습니다."
+
 private fun Coordinate.latLng() = LatLng.from(lat, lon)
 
 @Composable fun RunMap(
@@ -52,8 +58,16 @@ private fun Coordinate.latLng() = LatLng.from(lat, lon)
     onPointMoved: ((Int, Coordinate) -> Unit)? = null, showDistances: Boolean = false,
     focusPoint: Coordinate? = null, useLocationProvider: Boolean = true,
     selectedSegment: Int? = null, segmentLabels: List<String> = emptyList(), onSegmentSelected: ((Int) -> Unit)? = null,
-    showRecordEndpoints: Boolean = false
+    showRecordEndpoints: Boolean = false,
+    diagnosticKey: String? = null, onDiagnostic: ((MapDiagnostic) -> Unit)? = null
 ) {
+    val diagnostic by rememberUpdatedState(onDiagnostic)
+    val latestPlanned by rememberUpdatedState(planned)
+    val latestTracks by rememberUpdatedState(tracks)
+    DisposableEffect(Unit) {
+        reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.MAP_OPENED, planned, tracks))
+        onDispose { reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.MAP_CLOSED, latestPlanned, latestTracks)) }
+    }
     val mapModifier = modifier.semantics { if (showRecordEndpoints && tracks.any { it.isNotEmpty() }) contentDescription = "기록 경로 · 출발 삼각형 · 종료 깃발" }
     val context = LocalContext.current
     val app = context.applicationContext as RunkeepApp
@@ -66,6 +80,7 @@ private fun Coordinate.latLng() = LatLng.from(lat, lon)
     val fix = position.recentFix(now)
     val location = current ?: if (wantPosition && useLocationProvider) fix?.let { Coordinate(it.latitude, it.longitude) } else null
     if (BuildConfig.KAKAO_NATIVE_APP_KEY.isBlank()) {
+        LaunchedEffect(planned, tracks, diagnosticKey) { reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.SDK_NOT_READY, planned, tracks)) }
         Surface(mapModifier, color = MaterialTheme.colorScheme.surfaceContainer) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.Center) {
                 Text("카카오 지도 설정이 필요합니다", style = MaterialTheme.typography.titleMedium)
@@ -182,10 +197,14 @@ private fun Coordinate.latLng() = LatLng.from(lat, lon)
         }
         view.start(object : MapLifeCycleCallback() {
             override fun onMapDestroy() {
-                if (!disposed) forgetDestroyedMap()
+                if (!disposed) {
+                    reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.SDK_DESTROYED, latestPlanned, latestTracks))
+                    forgetDestroyedMap()
+                }
             }
             override fun onMapError(exception: Exception) {
                 if (!disposed) {
+                    reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.SDK_ERROR, latestPlanned, latestTracks))
                     forgetDestroyedMap()
                     error = "지도 연결 실패. 인터넷 연결과 지도 설정을 확인해주세요."
                 }
@@ -251,9 +270,16 @@ private fun Coordinate.latLng() = LatLng.from(lat, lon)
         val ready = map ?: return@LaunchedEffect
         if (centerRequested) latestLocation?.let { ready.moveCamera(CameraUpdateFactory.newCenterPosition(it.latLng(), 17)); centered = true; centerRequested = false }
     }
-    LaunchedEffect(map, routeUpdates, planned, tracks) {
-        val ready = map ?: return@LaunchedEffect
-        routeUpdates?.reconcile(planned, tracks)
+    LaunchedEffect(map, routeUpdates, planned, tracks, diagnosticKey) {
+        val ready = map
+        val updates = routeUpdates
+        if (ready == null || updates == null) {
+            reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.SDK_NOT_READY, planned, tracks))
+            return@LaunchedEffect
+        }
+        val applied = runCatching { updates.reconcile(planned, tracks) { reportMapDiagnostic(diagnostic, it) } }
+        if (applied.isFailure) { error = ROUTE_UPDATE_FAILURE; return@LaunchedEffect }
+        if (error == ROUTE_UPDATE_FAILURE) error = null
         if (cameraPolicy.fitInitially(planned.size + tracks.sumOf { it.size } >= 2)) {
             val all = planned + tracks.flatten()
             ready.moveCamera(CameraUpdateFactory.fitMapPoints(all.map { it.latLng() }.toTypedArray(), (40 * density).toInt(), 18))

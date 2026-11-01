@@ -3,14 +3,14 @@ package com.runkeep.app.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
-import com.runkeep.core.Coordinate
+import com.runkeep.core.*
 import com.runkeep.core.RecordEndpointKind
 import com.runkeep.core.recordMapEndpoints
 import com.runkeep.core.RecordEndpointScreenPoint
@@ -26,7 +26,15 @@ import kotlin.math.*
                        selectedPoint: Int? = null, onPointSelected: ((Int) -> Unit)? = null,
                        onPointMoved: ((Int, Coordinate) -> Unit)? = null, showDistances: Boolean = false,
                        focusPoint: Coordinate? = null, useLocationProvider: Boolean = true,
-                       selectedSegment: Int? = null, segmentLabels: List<String> = emptyList(), onSegmentSelected: ((Int) -> Unit)? = null, showRecordEndpoints: Boolean = false) {
+                       selectedSegment: Int? = null, segmentLabels: List<String> = emptyList(), onSegmentSelected: ((Int) -> Unit)? = null, showRecordEndpoints: Boolean = false,
+                       diagnosticKey: String? = null, onDiagnostic: ((MapDiagnostic) -> Unit)? = null) {
+    val diagnostic by rememberUpdatedState(onDiagnostic)
+    val latestPlanned by rememberUpdatedState(planned)
+    val latestTracks by rememberUpdatedState(tracks)
+    DisposableEffect(Unit) {
+        reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.MAP_OPENED, planned, tracks))
+        onDispose { reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.MAP_CLOSED, latestPlanned, latestTracks)) }
+    }
     val endpoints = if (showRecordEndpoints) recordMapEndpoints(tracks) else emptyList()
     Surface(modifier.semantics { if (endpoints.isNotEmpty()) contentDescription = "기록 경로 · 출발 삼각형 · 종료 깃발" }, color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large) {
         Column(Modifier.padding(16.dp)) {
@@ -80,6 +88,7 @@ import kotlin.math.*
                     }
                     current?.let { drawCircle(color, 8f, xy(it)) }
                 }
+                reportMapDiagnostic(diagnostic, mapDiagnostic(DiagnosticReason.PREVIEW_DRAWN, planned, tracks))
             }
             selectedSegment?.let { segmentLabels.getOrNull(it) }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             MapCameraControls(fitEnabled = false, locationEnabled = false, following = false,

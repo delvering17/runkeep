@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -24,6 +25,7 @@ import kotlin.math.roundToInt
 
 @Composable fun SettingsScreen(app: RunkeepApp, prefs: Preferences, onDiagnostics: () -> Unit,
     onVoice: () -> Unit, onSimulation: () -> Unit, onPrivacy: () -> Unit) {
+    val diagnosticStatus by app.diagnostics.status.collectAsStateWithLifecycle()
     var panel by rememberSaveable { mutableStateOf<String?>(null) }
     var weight by rememberSaveable { mutableStateOf("") }
     var weightError by rememberSaveable { mutableStateOf<String?>(null) }
@@ -64,6 +66,10 @@ import kotlin.math.roundToInt
         }) {
             ToggleRow("자동 일시정지", prefs.autoPause) { app.updateSettings(prefs.copy(autoPause = it)) }
             Text("자동 일시정지는 다음 운동부터 적용됩니다.", style = MaterialTheme.typography.bodySmall)
+            ToggleRow("진단 기록", prefs.diagnosticRecording) { app.updateSettings(prefs.copy(diagnosticRecording = it)) }
+            Text(diagnosticStatus, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            Text("켜진 동안 위치 처리·지도 갱신을 자동 기록합니다. 운동 중 변경할 수 있으며 이전 사건은 복원하지 않습니다.")
+            Text("진단은 운동당 4 MiB·전체 32 MiB·14일 보관합니다. 한도 초과 시 이전 자료를 삭제하거나 수집이 중단될 수 있습니다. 일부 유실은 내보내기에도 표시합니다.")
             SelectionRow("현재 위치", "확인", { panel = null; onDiagnostics() })
         }
         "personal" -> TaskSheet("개인 · 화면", onCancel = { panel = null }, actions = {
@@ -108,6 +114,7 @@ import kotlin.math.roundToInt
         Text("위치는 사용자가 달리기를 시작하면 기록하며 운동 중에는 알림을 표시합니다. 걸음 센서는 케이던스 추정에 사용합니다. 종료하면 위치·걸음 수집을 중단합니다.")
         Text("Health Connect에서는 사용자가 선택한 운동 시간대의 삼성헬스 운동·심박수 데이터만 가져옵니다. 기존 삼성헬스 기록을 수정하거나 삭제하지 않습니다. 설정에서 권한을 언제든 철회할 수 있습니다.")
         Text("지도 표시에는 카카오 서비스와 인터넷 연결을 사용합니다. 지도 요청에는 화면에 표시할 지역 등의 정보가 포함됩니다. 앱에서 직접 만든 코스나 운동 기록을 파일로 내보내는 것은 사용자가 선택할 때만 수행합니다.")
+        Text("진단 기록은 기본 꺼짐입니다. 켜면 위치 샘플과 처리 사건을 내부에 보관합니다. 진단 파일은 기본 좌표 제외이며, 공유 전 포함 범위를 선택합니다. 심박수·체중·계정·기기 식별자·키·개인 경로는 포함하지 않습니다. 자동 업로드하지 않습니다. 공유용 임시 파일은 최대 1시간 보관하고 다음 정리 시 삭제합니다.")
         Text("기록 화면에서 운동을 삭제할 수 있습니다. 앱 삭제 시 로컬 데이터도 삭제됩니다. 필요한 기록은 GPX로, 코스는 JSON으로 내보내 보관하세요.")
     }
 }

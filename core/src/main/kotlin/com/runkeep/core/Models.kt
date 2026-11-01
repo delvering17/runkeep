@@ -54,7 +54,8 @@ fun newId(): String = UUID.randomUUID().toString()
     val startDelayPresetSeconds: Int = 5, val cadencePresetSpm: Int = PaceFeedbackPolicy.DEFAULT_CADENCE_SPM,
     val paceCoachingMode: PaceCoachingMode = PaceCoachingMode.IMMEDIATE,
     val periodicPaceVoice: Boolean = false, val periodicPaceSeconds: Int = 30,
-    val musicFocusPolicy: MusicFocusPolicy = MusicFocusPolicy.DUCK
+    val musicFocusPolicy: MusicFocusPolicy = MusicFocusPolicy.DUCK,
+    val diagnosticRecording: Boolean = false
 ) {
     fun normalized(): Preferences = copy(
         paceTolerance = paceTolerance.coerceIn(5, 60),

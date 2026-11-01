@@ -21,7 +21,8 @@ data class PositionState(
     val phase: PositionPhase = PositionPhase.IDLE,
     val fix: Location? = null,
     val updates: Int = 0,
-    val detail: String? = null
+    val detail: String? = null,
+    val receivedAtMs: Long? = null
 ) {
     fun ageMs(now: Long = SystemClock.elapsedRealtime()): Long? = fix?.let { (now - it.elapsedRealtimeNanos / 1_000_000).coerceAtLeast(0) }
     fun recentFix(now: Long = SystemClock.elapsedRealtime()): Location? = fix?.takeIf { (ageMs(now) ?: Long.MAX_VALUE) <= 30_000 }
@@ -46,6 +47,7 @@ class LocationController(context: Context) {
     private val client = LocationServices.getFusedLocationProviderClient(this.context)
     private val mutable = MutableStateFlow(PositionState())
     val state = mutable.asStateFlow()
+    var diagnosticReceipt: ((Location, Long, com.runkeep.core.DiagnosticReason) -> Unit)? = null
     private val owners = mutableSetOf<Any>()
     private var subscribed = false
     private var generation = 0
@@ -115,9 +117,15 @@ class LocationController(context: Context) {
     }
 
     private fun accept(location: Location, simulated: Boolean = false) {
-        if (simulated != simulation.enabled) return
-        if (owners.isEmpty() || !subscribed || !location.hasAccuracy()) return
-        if (location.elapsedRealtimeNanos <= (mutable.value.fix?.elapsedRealtimeNanos ?: -1)) return
-        mutable.value = PositionState(PositionPhase.RECEIVING, Location(location), mutable.value.updates + 1)
+        val receivedAt = SystemClock.elapsedRealtime()
+        val reason = when {
+            simulated != simulation.enabled || owners.isEmpty() || !subscribed -> com.runkeep.core.DiagnosticReason.SOURCE_INACTIVE
+            !location.hasAccuracy() -> com.runkeep.core.DiagnosticReason.NO_ACCURACY
+            location.elapsedRealtimeNanos <= (mutable.value.fix?.elapsedRealtimeNanos ?: -1) -> com.runkeep.core.DiagnosticReason.OUT_OF_ORDER
+            else -> com.runkeep.core.DiagnosticReason.CONTROLLER_PASSED
+        }
+        runCatching { diagnosticReceipt?.invoke(location, receivedAt, reason) }
+        if (reason != com.runkeep.core.DiagnosticReason.CONTROLLER_PASSED) return
+        mutable.value = PositionState(PositionPhase.RECEIVING, Location(location), mutable.value.updates + 1, receivedAtMs = receivedAt)
     }
 }

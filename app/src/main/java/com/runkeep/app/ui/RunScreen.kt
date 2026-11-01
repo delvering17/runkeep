@@ -13,6 +13,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.runkeep.app.RunkeepApp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.heading
@@ -55,6 +58,9 @@ import kotlinx.serialization.encodeToString
     val window = mobileWindow()
     val density = LocalDensity.current
     var summaryHeight by remember { mutableIntStateOf(0) }
+    val app = LocalContext.current.applicationContext as RunkeepApp
+    val diagnosticCapture by app.diagnostics.capture.collectAsStateWithLifecycle()
+    val diagnosticStatus by app.diagnostics.status.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     fun togglePanel() { scope.launch { if (panel.bottomSheetState.currentValue == SheetValue.Expanded) panel.bottomSheetState.partialExpand() else panel.bottomSheetState.expand() } }
     LaunchedEffect(live.summary, live.preparation) {
@@ -161,6 +167,7 @@ import kotlinx.serialization.encodeToString
                     current?.status == RunStatus.INTERRUPTED -> "복구된 기록"
                     else -> "일시정지"
                 }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { heading() })
+                if (prefs.diagnosticRecording || diagnosticStatus.contains("유실")) Text(diagnosticStatus, style = MaterialTheme.typography.bodySmall)
                 Text(if (recovery != null || current?.status == RunStatus.INTERRUPTED) "중단 시간과 거리는 기록에서 제외됩니다." else live.gpsMessage,
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -216,6 +223,8 @@ import kotlinx.serialization.encodeToString
                         tracks = if (current != null) live.points.groupBy { it.segment }.values.map { part -> part.map { it.coordinate } } else emptyList(),
                         selectedSegment = active?.takeIf { it.coursePaceEnabled && !it.coursePaceComplete }?.courseLegIndex?.takeIf { it >= 0 },
                         current = live.position, centerOnUser = true, followUserInitially = true,
+                        diagnosticKey = diagnosticCapture,
+                        onDiagnostic = { result -> app.diagnostics.map(active.id, "live", result) },
                         modifier = Modifier.fillMaxSize().padding(padding))
                 }
             }
